@@ -49,24 +49,52 @@ remote sessions, or prove that a new MCP callable tool is really available.
    - Treats status as diagnostic evidence only.
    - Requires an actual model-callable tool invocation for MCP catalog proof.
 
+## Bootstrap Control Model
+
+The project is intentionally not self-hosted yet.
+
+During early development, there are two roles:
+
+- Controller session: an external Codex session using the old
+  `codex-mcp-hot-reloader` harness. It schedules reloads/continuations, reviews
+  worker output, controls commits/pushes, and prevents stale architecture from
+  being copied blindly.
+- Dogfood worker session: a Codex session running inside this repo. It uses the
+  repo-local MCP when available and proves whether the tool surface is usable by
+  an agent in a real turn.
+
+The dogfood worker should receive narrow checkpoints, not broad ownership, until
+the project implements its own thread-context, operation, reload, and
+continuation tools.
+
+The project can become its own primary control plane only after Phase 4
+minimum:
+
+- identify the intended loaded/persisted thread;
+- record operation state and next actions;
+- reload MCP config through App Server;
+- schedule a continuation turn after idle/stable boundary;
+- prove changed callable tools from the fresh turn.
+
 ## Initial MCP Surface
 
-The first scaffold exposes:
+The current MCP surface exposes:
 
 - `codex_session_manager_probe`
+- `codex_threads_list`
+- `codex_mcp_status_list`
 - `codex-session-manager://operations`
 
 Planned next tools:
 
-- `codex_threads_list`
 - `codex_thread_context`
+- `codex_operation_wait`
+- `codex_operation_read`
 - `codex_mcp_reload`
 - `codex_session_continue`
 - `codex_session_launch`
 - `codex_session_close`
 - `codex_session_replace`
-- `codex_operation_wait`
-- `codex_operation_read`
 
 ## Boundaries
 
@@ -80,4 +108,3 @@ This project is not:
 The project may later grow a preloader UI or CLI, but the core artifact is the
 MCP wrapper that lets a Codex agent manage the Codex session/control-plane
 problem from inside its own workflow.
-

@@ -1,6 +1,31 @@
 # Project Plan
 
-Status: initial scaffold
+Status: Phase 2 complete; Phase 3 next
+
+## Bootstrap Workflow
+
+This project has a self-reference problem: the tool being built is the same
+tool a future Codex agent will use to manage its own App Server session. Until
+the project can discover its own thread, track operations, reload MCP servers,
+and schedule a continuation turn, it cannot safely be its own primary control
+plane.
+
+Current workflow:
+
+- The old `codex-mcp-hot-reloader` repo acts only as an external controller and
+  validation harness.
+- This repo stays isolated from the old implementation shape.
+- A separate Codex remote session in this repo acts as a dogfood worker.
+- The controller authorizes architecture, commits, pushes, reloads, and final
+  callable proof.
+- The worker executes narrow implementation checkpoints and proves whether the
+  new MCP surface is usable by a real Codex agent.
+
+Migration criterion:
+
+The worker should not become the primary session until Phase 4 minimum is done:
+thread context, operation read/wait, MCP reload, continuation scheduling, and
+fresh-turn callable proof.
 
 ## Phase 1: Foundation
 
@@ -16,6 +41,8 @@ Exit criteria:
 - `npm test`
 - `npm run smoke`
 - `npm run build`
+
+Status: complete and pushed in `3d2984f Add TypeScript MCP scaffold`.
 
 ## Phase 2: App Server Adapter
 
@@ -33,6 +60,16 @@ Exit criteria:
 - Unit tests for URL validation and request correlation.
 - Smoke against an active loopback App Server.
 
+Status: complete and pushed in `a45397d Add App Server read-only MCP tools`.
+
+Additional proof:
+
+- `codex_threads_list` and `codex_mcp_status_list` were registered as MCP
+  tools.
+- App Server status listed the new tools.
+- A fresh continuation turn in the dogfood worker called both tools
+  successfully.
+
 ## Phase 3: Thread Context And Operations
 
 - Implement `codex_thread_context`.
@@ -46,6 +83,8 @@ Exit criteria:
 - Same-cwd thread discovery works with multiple loaded threads.
 - Marker match wins over active-but-stale candidates.
 
+Status: next.
+
 ## Phase 4: Reload And Continuation
 
 - Implement MCP reload.
@@ -57,6 +96,8 @@ Exit criteria:
 
 - Handler/schema/new-tool fixture probes pass by continuation.
 - Same-turn stale behavior is recorded as diagnostic, not pass.
+
+Status: not started.
 
 ## Phase 5: Session Launch, Close, Replace
 
@@ -71,6 +112,8 @@ Exit criteria:
 - Replacement fallback can validate a callable MCP change when continuation is
   stale.
 
+Status: not started.
+
 ## Phase 6: Port From Experimental Repo
 
 Port only the parts that survive the new architecture:
@@ -84,3 +127,4 @@ Port only the parts that survive the new architecture:
 
 Do not copy the old code shape blindly.
 
+Status: ongoing reference only.

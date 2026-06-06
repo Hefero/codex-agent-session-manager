@@ -19,6 +19,7 @@ Current foundation:
 - TypeScript ESM package.
 - MCP stdio server using @modelcontextprotocol/sdk.
 - Zod-backed probe tool: codex_session_manager_probe.
+- App Server read-only tools: codex_threads_list and codex_mcp_status_list.
 - Resource: codex-session-manager://operations.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
 
@@ -37,11 +38,13 @@ Validation already expected for the scaffold:
 - npm run build
 
 Next likely work:
-1. Review current scaffold and validation output.
-2. Implement the typed App Server client and loopback URL guardrails.
-3. Add thread loaded/list/read wrappers.
-4. Add codex_thread_context with marker/cwd/status evidence.
-5. Keep tool schemas explicit and do not expose raw arbitrary App Server RPC.
+1. Confirm Phase 2 is present and callable.
+2. Implement codex_thread_context with marker/cwd/status evidence.
+3. Add operation store/resources with codex_operation_read and
+   codex_operation_wait.
+4. Keep tool schemas explicit and do not expose raw arbitrary App Server RPC.
+5. Do not assume the worker is fully self-managing until reload/continue are
+   implemented and proven.
 
 Do not:
 - log secrets or full continuation prompts;
@@ -49,4 +52,3 @@ Do not:
 - treat App Server MCP status as final callable proof;
 - implement broad auto-approval defaults from worker projects.
 ```
-

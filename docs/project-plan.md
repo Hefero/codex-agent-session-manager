@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 3 complete; Phase 4 next
+Status: Phase 4 preflight complete; MCP reload next
 
 ## Bootstrap Workflow
 
@@ -90,8 +90,8 @@ Implemented:
   raw thread payloads.
 - Marker matches outrank active-only and cwd-only heuristics.
 - Stored thread matches are low-confidence recovery hints.
-- In-memory operation records track id, kind, status, timestamps, evidence,
-  failure, and next action.
+- Operation records track id, kind, status, timestamps, evidence, failure, and
+  next action.
 - `codex_operation_read` reads operation state by id.
 - `codex_operation_wait` waits for terminal operation state or reports missing
   and timeout conditions.
@@ -121,6 +121,8 @@ Validation:
 
 ## Phase 4: Reload And Continuation
 
+- Persist operation state so detached child processes can update operation
+  evidence.
 - Implement MCP reload.
 - Implement continuation scheduling after idle/stable boundary.
 - Record status-before/status-after as evidence.
@@ -131,7 +133,32 @@ Exit criteria:
 - Handler/schema/new-tool fixture probes pass by continuation.
 - Same-turn stale behavior is recorded as diagnostic, not pass.
 
-Status: not started.
+Status: preflight complete; reload and continuation not started.
+
+Implemented:
+
+- Runtime operation state is file-backed at
+  `.codex-agent-session-manager/state/operations.json`.
+- `.codex-agent-session-manager/` is ignored as local runtime state.
+- Operation reads and waits reload state from disk, so an active MCP server can
+  observe updates written by another process.
+- Writes use temp-file plus rename.
+
+Validation:
+
+- `npm run check`
+- `npm test`
+- `npm run smoke`
+- `npm run build`
+- `git diff --check` with only Windows LF/CRLF warnings
+- Tests cover persistence across store instances, corrupt/missing state files,
+  deep clone behavior, and wait observing completion from another store
+  instance.
+- A durable operation was written through `OperationStore`, App Server MCP was
+  reloaded, same-thread continuation remained stale, and replacement/fresh TUI
+  then read/waited that operation successfully:
+  `read found true/status completed`, `wait found true/completed true/timedOut
+  false`.
 
 ## Phase 5: Session Launch, Close, Replace
 

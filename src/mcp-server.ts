@@ -132,7 +132,7 @@ export function createMcpServer(): McpServer {
     'codex_operation_read',
     {
       title: 'Read Operation',
-      description: 'Read an in-memory session-manager operation by id.',
+      description: 'Read a session-manager operation by id.',
       inputSchema: operationReadInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -154,7 +154,7 @@ export function createMcpServer(): McpServer {
     'codex_operation_wait',
     {
       title: 'Wait For Operation',
-      description: 'Wait for an in-memory session-manager operation to complete or fail.',
+      description: 'Wait for a session-manager operation to complete or fail.',
       inputSchema: operationWaitInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -177,7 +177,7 @@ export function createMcpServer(): McpServer {
     'codex-session-manager://operations',
     {
       title: 'Operation List',
-      description: 'Current in-memory session-manager operations.',
+      description: 'Current session-manager operations.',
       mimeType: 'application/json',
     },
     async (uri) => ({

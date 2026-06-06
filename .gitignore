@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .tmp/
+.codex-agent-session-manager/
 .codex/
 .codex-mcp-hot-reloader/
 .env

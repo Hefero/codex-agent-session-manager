@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 3 complete
+Status: Phase 4 preflight
 Date: 2026-06-06
 
 ## Thesis
@@ -29,6 +29,9 @@ remote sessions, or prove that a new MCP callable tool is really available.
 2. Operation model
    - Every mutating or long-running action gets an operation id.
    - Operations expose status, timestamps, evidence, and next actions.
+   - Operation state is persisted under
+     `.codex-agent-session-manager/state/operations.json` so detached child
+     processes can update evidence that the active MCP server can later read.
    - Read-only tools can return direct results without creating operations.
 
 3. App Server adapter

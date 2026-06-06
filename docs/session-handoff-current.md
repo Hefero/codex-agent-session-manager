@@ -15,7 +15,8 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 
 ## Current State
 
-Phases 1, 2, and 3 are implemented and validated; check `git log` and
+Phases 1, 2, and 3 are implemented and validated. Phase 4 preflight for
+durable operation state is implemented and validated; check `git log` and
 `git status` for the latest commit state.
 
 Implemented:
@@ -30,6 +31,8 @@ Implemented:
 - Read-only thread recommendation tool `codex_thread_context`.
 - Operation tools `codex_operation_read` and `codex_operation_wait`.
 - Resource `codex-session-manager://operations`.
+- Runtime operation state under
+  `.codex-agent-session-manager/state/operations.json`.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
 - Initial docs and ADRs.
@@ -69,6 +72,8 @@ git diff --check
 - Use `@modelcontextprotocol/sdk` directly.
 - Use Zod as the tool schema source of truth.
 - Keep operation state and evidence as first-class resources.
+- Persist operation state before implementing detached reload/continue children;
+  in-memory-only state cannot be updated across processes.
 - Do not expose arbitrary App Server JSON-RPC to the model.
 - Treat App Server MCP status as diagnostic only; callable proof requires an
   actual model-callable tool invocation from the correct continuation or
@@ -107,6 +112,27 @@ codex_operation_wait:
   callable: true
   ok true: true
   found false: true
+  timedOut false: true
+```
+
+## Latest Phase 4 Preflight Evidence
+
+Durable operation state was validated by writing `proof-durable-op` through the
+store, reloading MCP, observing same-thread continuation stale behavior, then
+using replacement proof:
+
+```text
+codex_operation_read:
+  callable: true
+  ok true: true
+  found true: true
+  status completed: true
+
+codex_operation_wait:
+  callable: true
+  ok true: true
+  found true: true
+  completed true: true
   timedOut false: true
 ```
 

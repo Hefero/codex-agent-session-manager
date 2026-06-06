@@ -35,7 +35,9 @@ Current read-only checks:
 - list stored threads scoped by cwd;
 - read MCP server status for a target thread.
 - recommend a target thread by marker/cwd/status evidence;
-- read and wait for in-memory operation records.
+- read and wait for operation records.
+- persist operation records under local workspace runtime state;
+- observe operation completion written by another store/process instance.
 
 ## Callable Catalog Proof Matrix
 

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 
 export const operationStatuses = ['pending', 'running', 'completed', 'failed'] as const;
@@ -42,12 +44,23 @@ export interface OperationWaitResult {
   timedOut: boolean;
 }
 
+export interface OperationStoreOptions {
+  workspace?: string;
+  stateFile?: string;
+  durable?: boolean;
+}
+
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MIN_WAIT_TIMEOUT_MS = 0;
 const MAX_WAIT_TIMEOUT_MS = 120_000;
 const DEFAULT_POLL_MS = 100;
 const MIN_POLL_MS = 10;
 const MAX_POLL_MS = 5_000;
+const STATE_DIR_NAME = '.codex-agent-session-manager';
+
+export function operationStateFileForWorkspace(workspace = process.cwd()): string {
+  return join(resolve(workspace), STATE_DIR_NAME, 'state', 'operations.json');
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -78,10 +91,59 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isOperationStatus(value: unknown): value is OperationStatus {
+  return typeof value === 'string' && operationStatuses.includes(value as OperationStatus);
+}
+
+function cloneOptional(value: unknown): unknown {
+  return value === undefined ? undefined : cloneValue(value);
+}
+
+function operationFromUnknown(value: unknown): OperationRecord | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== 'string' || value.id.length === 0) return null;
+  if (typeof value.kind !== 'string' || value.kind.length === 0) return null;
+  if (!isOperationStatus(value.status)) return null;
+  if (typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string') return null;
+
+  const operation: OperationRecord = {
+    id: value.id,
+    kind: value.kind,
+    status: value.status,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+  if (typeof value.completedAt === 'string') {
+    operation.completedAt = value.completedAt;
+  }
+  if (value.failure !== undefined) {
+    operation.failure = cloneOptional(value.failure);
+  }
+  if (value.evidence !== undefined) {
+    operation.evidence = cloneOptional(value.evidence);
+  }
+  if (typeof value.nextAction === 'string') {
+    operation.nextAction = value.nextAction;
+  }
+  return operation;
+}
+
 export class OperationStore {
   private readonly operations = new Map<string, OperationRecord>();
+  private readonly stateFile: string | null;
+
+  constructor(options: OperationStoreOptions = {}) {
+    this.stateFile =
+      options.durable === false ? null : resolve(options.stateFile ?? operationStateFileForWorkspace(options.workspace));
+    this.loadFromDisk();
+  }
 
   create(input: CreateOperationInput): OperationRecord {
+    this.loadFromDisk();
     const timestamp = nowIso();
     const operation: OperationRecord = {
       id: input.id ?? randomUUID(),
@@ -91,21 +153,23 @@ export class OperationStore {
       updatedAt: timestamp,
     };
     if (input.evidence !== undefined) {
-      operation.evidence = input.evidence;
+      operation.evidence = cloneOptional(input.evidence);
     }
     if (input.nextAction !== undefined) {
       operation.nextAction = input.nextAction;
     }
     this.operations.set(operation.id, operation);
+    this.saveToDisk();
     return cloneOperation(operation);
   }
 
   update(operationId: string, input: UpdateOperationInput): OperationRecord | null {
+    this.loadFromDisk();
     const current = this.operations.get(operationId);
     if (!current) return null;
 
     const updated: OperationRecord = {
-      ...current,
+      ...cloneOperation(current),
       updatedAt: nowIso(),
     };
     if (input.status !== undefined) {
@@ -115,12 +179,13 @@ export class OperationStore {
       }
     }
     if (input.evidence !== undefined) {
-      updated.evidence = input.evidence;
+      updated.evidence = cloneOptional(input.evidence);
     }
     if (input.nextAction !== undefined) {
       updated.nextAction = input.nextAction;
     }
     this.operations.set(operationId, updated);
+    this.saveToDisk();
     return cloneOperation(updated);
   }
 
@@ -129,33 +194,37 @@ export class OperationStore {
   }
 
   fail(operationId: string, input: { failure: unknown; evidence?: unknown; nextAction?: string }): OperationRecord | null {
+    this.loadFromDisk();
     const current = this.operations.get(operationId);
     if (!current) return null;
 
     const timestamp = nowIso();
     const failed: OperationRecord = {
-      ...current,
+      ...cloneOperation(current),
       status: 'failed',
       updatedAt: timestamp,
       completedAt: timestamp,
-      failure: input.failure,
+      failure: cloneOptional(input.failure),
     };
     if (input.evidence !== undefined) {
-      failed.evidence = input.evidence;
+      failed.evidence = cloneOptional(input.evidence);
     }
     if (input.nextAction !== undefined) {
       failed.nextAction = input.nextAction;
     }
     this.operations.set(operationId, failed);
+    this.saveToDisk();
     return cloneOperation(failed);
   }
 
   read(operationId: string): OperationRecord | null {
+    this.loadFromDisk();
     const operation = this.operations.get(operationId);
     return operation ? cloneOperation(operation) : null;
   }
 
   list(): OperationRecord[] {
+    this.loadFromDisk();
     return [...this.operations.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(cloneOperation);
   }
 
@@ -197,6 +266,43 @@ export class OperationStore {
       }
       await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
     }
+  }
+
+  private loadFromDisk(): void {
+    if (!this.stateFile) return;
+    if (!existsSync(this.stateFile)) {
+      this.operations.clear();
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(this.stateFile, 'utf8')) as unknown;
+      const rawOperations = isRecord(parsed) && Array.isArray(parsed.operations) ? parsed.operations : [];
+      this.operations.clear();
+      for (const rawOperation of rawOperations) {
+        const operation = operationFromUnknown(rawOperation);
+        if (operation) {
+          this.operations.set(operation.id, operation);
+        }
+      }
+    } catch {
+      this.operations.clear();
+    }
+  }
+
+  private saveToDisk(): void {
+    if (!this.stateFile) return;
+
+    const operations = [...this.operations.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(cloneOperation);
+    const payload = {
+      operations,
+      count: operations.length,
+      updatedAt: nowIso(),
+    };
+    mkdirSync(dirname(this.stateFile), { recursive: true });
+    const tempFile = `${this.stateFile}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(tempFile, `${JSON.stringify(payload, null, 2)}\n`);
+    renameSync(tempFile, this.stateFile);
   }
 }
 

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.tmp/
+.codex/
+.codex-mcp-hot-reloader/
+.env
+.env.*
+!.env.example
+npm-debug.log*

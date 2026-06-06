@@ -70,8 +70,10 @@ try {
   send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const tools = await waitForResponse(2);
   const toolNames = (tools.result as { tools?: Array<{ name?: string }> }).tools?.map((tool) => tool.name) ?? [];
-  if (!toolNames.includes('codex_session_manager_probe')) {
-    throw new Error(`Probe tool missing. Saw: ${toolNames.join(', ')}`);
+  const requiredTools = ['codex_session_manager_probe', 'codex_threads_list', 'codex_mcp_status_list'];
+  const missingTools = requiredTools.filter((name) => !toolNames.includes(name));
+  if (missingTools.length > 0) {
+    throw new Error(`Required tools missing: ${missingTools.join(', ')}. Saw: ${toolNames.join(', ')}`);
   }
 
   send({
@@ -103,4 +105,3 @@ try {
   child.kill();
   await once(child, 'exit').catch(() => undefined);
 }
-

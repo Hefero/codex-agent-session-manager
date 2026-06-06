@@ -1,6 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
+import {
+  buildMcpStatusListPayload,
+  buildThreadsListPayload,
+  mcpStatusListInputSchema,
+  threadsListInputSchema,
+} from './tools/app-server.js';
 import { operationStore } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
 import { packageName, packageVersion } from './version.js';
@@ -49,6 +55,50 @@ export function createMcpServer(): McpServer {
     },
   );
 
+  server.registerTool(
+    'codex_threads_list',
+    {
+      title: 'List Codex Threads',
+      description: 'List loaded Codex App Server thread ids, with optional redacted stored-thread summaries.',
+      inputSchema: threadsListInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = await buildThreadsListPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_mcp_status_list',
+    {
+      title: 'List Codex MCP Status',
+      description: 'Read App Server MCP status for a thread as diagnostic evidence, not callable proof.',
+      inputSchema: mcpStatusListInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = await buildMcpStatusListPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
   server.registerResource(
     'operations',
     'codex-session-manager://operations',
@@ -76,4 +126,3 @@ export async function startStdioServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
-

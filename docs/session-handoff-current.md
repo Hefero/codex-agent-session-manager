@@ -15,8 +15,8 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 
 ## Current State
 
-Phase 1 and Phase 2 have been created. Phase 1 is pushed. Phase 2 may be pushed
-depending on when this handoff is read; check `git log` and `git status`.
+Phase 1 and Phase 2 have been pushed. Phase 3 first slice is implemented and
+validated; check `git log` and `git status` for the latest commit state.
 
 Implemented:
 
@@ -27,6 +27,7 @@ Implemented:
 - CLI entry in `src/cli.ts`.
 - Probe tool `codex_session_manager_probe`.
 - Read-only tools `codex_threads_list` and `codex_mcp_status_list`.
+- Read-only thread recommendation tool `codex_thread_context`.
 - Resource `codex-session-manager://operations`.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
@@ -71,6 +72,26 @@ git diff --check
 - Treat App Server MCP status as diagnostic only; callable proof requires an
   actual model-callable tool invocation from the correct continuation or
   replacement boundary.
+- Resolve App Server URL from explicit tool input, `CODEX_APP_SERVER_URL`, or
+  workspace launcher state. Prefer `.codex-agent-session-manager` state when
+  available; `.codex-mcp-hot-reloader` state is bootstrap compatibility only.
+
+## Latest Phase 3 Evidence
+
+`codex_thread_context` was validated locally and by dogfood replacement proof:
+
+```text
+callable: true
+call succeeded: true
+recommendedThreadIdSource: loaded-marker-match
+recommendationConfidence: high
+ambiguous: false
+target markerMatched: true
+```
+
+Before replacement, App Server status listed the tool but same-thread
+reload/continuation still did not expose it in the model-callable catalog. Do
+not count status alone as final proof.
 
 ## Bootstrap Rule
 
@@ -84,10 +105,8 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. Confirm `codex_threads_list` and `codex_mcp_status_list` are callable in a
-   fresh turn when the controller asks.
-3. Start Phase 3:
-   - `codex_thread_context`;
+2. If Phase 3 first slice is still uncommitted, review and commit it.
+3. Continue Phase 3 with:
    - operation store/resources;
    - `codex_operation_read`;
    - `codex_operation_wait`.

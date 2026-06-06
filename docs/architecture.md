@@ -1,6 +1,6 @@
 # Architecture
 
-Status: initial scaffold
+Status: Phase 3 first slice
 Date: 2026-06-06
 
 ## Thesis
@@ -76,6 +76,15 @@ minimum:
 - schedule a continuation turn after idle/stable boundary;
 - prove changed callable tools from the fresh turn.
 
+Current bootstrap compatibility:
+
+- App Server URL resolution prefers explicit tool input, then
+  `CODEX_APP_SERVER_URL`, then workspace launcher state.
+- Workspace state prefers `.codex-agent-session-manager/state/app-server.json`
+  and accepts `.codex-mcp-hot-reloader/state/app-server.json` only as a
+  temporary compatibility path while the old repo still controls early
+  dogfood sessions.
+
 ## Initial MCP Surface
 
 The current MCP surface exposes:
@@ -83,11 +92,11 @@ The current MCP surface exposes:
 - `codex_session_manager_probe`
 - `codex_threads_list`
 - `codex_mcp_status_list`
+- `codex_thread_context`
 - `codex-session-manager://operations`
 
 Planned next tools:
 
-- `codex_thread_context`
 - `codex_operation_wait`
 - `codex_operation_read`
 - `codex_mcp_reload`
@@ -95,6 +104,20 @@ Planned next tools:
 - `codex_session_launch`
 - `codex_session_close`
 - `codex_session_replace`
+
+## Callable Refresh Evidence
+
+Phase 3 proved an important boundary:
+
+- App Server status can list a newly registered tool while the current TUI turn
+  still cannot call it.
+- An additional same-thread continuation after reload can still remain stale.
+- A replacement/fresh remote TUI for the same thread saw
+  `codex_thread_context` and called it successfully.
+
+This reinforces the validation rule: `mcpServerStatus/list` is diagnostic, and
+final MCP proof requires an actual model-callable invocation at the correct
+turn/session boundary.
 
 ## Boundaries
 

@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 2 complete; Phase 3 next
+Status: Phase 3 first slice complete; operations next
 
 ## Bootstrap Workflow
 
@@ -83,7 +83,37 @@ Exit criteria:
 - Same-cwd thread discovery works with multiple loaded threads.
 - Marker match wins over active-but-stale candidates.
 
-Status: next.
+Status: first slice complete and validated; operations remain.
+
+Implemented:
+
+- `codex_thread_context` summarizes loaded thread evidence without returning
+  raw thread payloads.
+- Marker matches outrank active-only and cwd-only heuristics.
+- Stored thread matches are low-confidence recovery hints.
+- App Server URL fallback now uses explicit input, `CODEX_APP_SERVER_URL`, or
+  workspace launcher state. The state resolver prefers this repo's future
+  `.codex-agent-session-manager` state and accepts the old
+  `.codex-mcp-hot-reloader` state only for bootstrap compatibility.
+
+Validation:
+
+- `npm run check`
+- `npm test`
+- `npm run smoke`
+- `npm run build`
+- `git diff --check` with only Windows LF/CRLF warnings
+- App Server status listed `codex_thread_context`.
+- Same-thread reload plus continuation still saw stale callable state twice.
+- Replacement/fresh remote TUI then called `codex_thread_context` successfully
+  with `recommendedThreadIdSource: loaded-marker-match`,
+  `recommendationConfidence: high`, and `markerMatched: true`.
+
+Remaining in Phase 3:
+
+- operation store/resource expansion;
+- `codex_operation_read`;
+- `codex_operation_wait`.
 
 ## Phase 4: Reload And Continuation
 

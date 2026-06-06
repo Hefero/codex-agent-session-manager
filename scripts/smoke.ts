@@ -70,7 +70,7 @@ try {
   send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const tools = await waitForResponse(2);
   const toolNames = (tools.result as { tools?: Array<{ name?: string }> }).tools?.map((tool) => tool.name) ?? [];
-  const requiredTools = ['codex_session_manager_probe', 'codex_threads_list', 'codex_mcp_status_list'];
+  const requiredTools = ['codex_session_manager_probe', 'codex_threads_list', 'codex_mcp_status_list', 'codex_thread_context'];
   const missingTools = requiredTools.filter((name) => !toolNames.includes(name));
   if (missingTools.length > 0) {
     throw new Error(`Required tools missing: ${missingTools.join(', ')}. Saw: ${toolNames.join(', ')}`);

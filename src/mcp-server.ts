@@ -9,6 +9,7 @@ import {
 } from './tools/app-server.js';
 import { operationStore } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
+import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
 import { packageName, packageVersion } from './version.js';
 
 const instructions = [
@@ -92,6 +93,28 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = await buildMcpStatusListPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_thread_context',
+    {
+      title: 'Recommend Codex Thread Context',
+      description: 'Summarize loaded thread evidence and recommend a target thread without exposing raw thread payloads.',
+      inputSchema: threadContextInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = await buildThreadContextPayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

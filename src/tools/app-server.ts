@@ -13,7 +13,7 @@ const MAX_STORED_LIMIT = 100;
 const appServerUrlSchema = z
   .string()
   .optional()
-  .describe('Optional loopback App Server websocket URL. If omitted, CODEX_APP_SERVER_URL is used.');
+  .describe('Optional loopback App Server websocket URL. Defaults to CODEX_APP_SERVER_URL or workspace launcher state.');
 const timeoutMsSchema = z.number().int().min(1_000).max(120_000).optional().describe('Request timeout in milliseconds.');
 
 export const threadsListInputSchema = {

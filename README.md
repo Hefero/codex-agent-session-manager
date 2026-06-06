@@ -19,16 +19,26 @@ Early scope:
 The project is intentionally starting from the session-management architecture,
 not from a generic App Server SDK or a human session browser.
 
-## Current Scaffold
+## Current Surface
 
-The first scaffold is intentionally small:
+The current MCP surface is still small, but already dogfooded:
 
 - TypeScript ESM package.
 - MCP stdio server using `@modelcontextprotocol/sdk`.
-- Zod-backed probe tool: `codex_session_manager_probe`.
-- Resource placeholder: `codex-session-manager://operations`.
+- Zod-backed tools:
+  - `codex_session_manager_probe`
+  - `codex_threads_list`
+  - `codex_mcp_status_list`
+  - `codex_thread_context`
+  - `codex_operation_read`
+  - `codex_operation_wait`
+- Operation resource: `codex-session-manager://operations`.
 - Raw JSON-RPC smoke test for MCP initialization, tool listing, tool call, and
   resource listing.
+
+MCP status from App Server is treated as diagnostic only. Callable-catalog proof
+requires a real model-callable tool invocation from the correct continuation or
+replacement boundary.
 
 ## Development
 

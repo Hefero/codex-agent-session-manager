@@ -15,8 +15,8 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 
 ## Current State
 
-Phase 1 and Phase 2 have been pushed. Phase 3 first slice is implemented and
-validated; check `git log` and `git status` for the latest commit state.
+Phases 1, 2, and 3 are implemented and validated; check `git log` and
+`git status` for the latest commit state.
 
 Implemented:
 
@@ -28,6 +28,7 @@ Implemented:
 - Probe tool `codex_session_manager_probe`.
 - Read-only tools `codex_threads_list` and `codex_mcp_status_list`.
 - Read-only thread recommendation tool `codex_thread_context`.
+- Operation tools `codex_operation_read` and `codex_operation_wait`.
 - Resource `codex-session-manager://operations`.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
@@ -93,6 +94,22 @@ Before replacement, App Server status listed the tool but same-thread
 reload/continuation still did not expose it in the model-callable catalog. Do
 not count status alone as final proof.
 
+`codex_operation_read` and `codex_operation_wait` were also validated by
+replacement proof after same-thread reload/continuation remained stale:
+
+```text
+codex_operation_read:
+  callable: true
+  ok true: true
+  found false: true
+
+codex_operation_wait:
+  callable: true
+  ok true: true
+  found false: true
+  timedOut false: true
+```
+
 ## Bootstrap Rule
 
 Until Phase 4 minimum exists, this session is a dogfood worker, not the primary
@@ -105,12 +122,12 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. If Phase 3 first slice is still uncommitted, review and commit it.
-3. Continue Phase 3 with:
-   - operation store/resources;
-   - `codex_operation_read`;
-   - `codex_operation_wait`.
-4. Keep all future session-manager tools small, typed, and explicitly guarded.
+2. Continue Phase 4 with:
+   - `codex_mcp_reload`;
+   - `codex_session_continue`;
+   - operation evidence for reload/status/continuation;
+   - fresh-turn callable proof.
+3. Keep all future session-manager tools small, typed, and explicitly guarded.
 
 ## Do Not Do
 

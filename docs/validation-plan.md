@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: initial scaffold
+Status: Phase 3
 
 ## Scaffold Checks
 
@@ -14,13 +14,19 @@ npm run build
 The smoke must prove:
 
 - MCP initialize succeeds.
-- `tools/list` includes `codex_session_manager_probe`.
+- `tools/list` includes:
+  - `codex_session_manager_probe`
+  - `codex_threads_list`
+  - `codex_mcp_status_list`
+  - `codex_thread_context`
+  - `codex_operation_read`
+  - `codex_operation_wait`
 - `tools/call` can call `codex_session_manager_probe`.
 - `resources/list` includes `codex-session-manager://operations`.
 
 ## App Server Checks
 
-To be added in Phase 2:
+Current read-only checks:
 
 - reject non-loopback App Server URLs;
 - reject URL credentials, path, query, and fragment;
@@ -28,6 +34,8 @@ To be added in Phase 2:
 - list loaded threads;
 - list stored threads scoped by cwd;
 - read MCP server status for a target thread.
+- recommend a target thread by marker/cwd/status evidence;
+- read and wait for in-memory operation records.
 
 ## Callable Catalog Proof Matrix
 
@@ -50,6 +58,5 @@ removed-tool, or renamed-server cases.
 - Continuation after the target thread is idle is the preferred proof for
   handler/schema/new-tool changes.
 - Replacement/fresh remote remains fallback for stubborn callable bridge
-  staleness, especially rename cases.
+  staleness, especially new-tool and rename cases.
 - Stale remote TUI cleanup is session hygiene, not callable proof.
-

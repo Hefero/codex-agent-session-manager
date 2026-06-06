@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 3 first slice complete; operations next
+Status: Phase 3 complete; Phase 4 next
 
 ## Bootstrap Workflow
 
@@ -24,8 +24,7 @@ Current workflow:
 Migration criterion:
 
 The worker should not become the primary session until Phase 4 minimum is done:
-thread context, operation read/wait, MCP reload, continuation scheduling, and
-fresh-turn callable proof.
+MCP reload, continuation scheduling, and fresh-turn callable proof.
 
 ## Phase 1: Foundation
 
@@ -83,7 +82,7 @@ Exit criteria:
 - Same-cwd thread discovery works with multiple loaded threads.
 - Marker match wins over active-but-stale candidates.
 
-Status: first slice complete and validated; operations remain.
+Status: complete and validated.
 
 Implemented:
 
@@ -91,6 +90,11 @@ Implemented:
   raw thread payloads.
 - Marker matches outrank active-only and cwd-only heuristics.
 - Stored thread matches are low-confidence recovery hints.
+- In-memory operation records track id, kind, status, timestamps, evidence,
+  failure, and next action.
+- `codex_operation_read` reads operation state by id.
+- `codex_operation_wait` waits for terminal operation state or reports missing
+  and timeout conditions.
 - App Server URL fallback now uses explicit input, `CODEX_APP_SERVER_URL`, or
   workspace launcher state. The state resolver prefers this repo's future
   `.codex-agent-session-manager` state and accepts the old
@@ -108,12 +112,12 @@ Validation:
 - Replacement/fresh remote TUI then called `codex_thread_context` successfully
   with `recommendedThreadIdSource: loaded-marker-match`,
   `recommendationConfidence: high`, and `markerMatched: true`.
-
-Remaining in Phase 3:
-
-- operation store/resource expansion;
-- `codex_operation_read`;
-- `codex_operation_wait`.
+- App Server status listed `codex_operation_read` and `codex_operation_wait`.
+- Same-thread reload plus continuation still saw stale callable state for the
+  new operation tools.
+- Replacement/fresh remote TUI then called both operation tools successfully on
+  a missing operation id: each returned `ok: true` and `found: false`; wait also
+  returned `timedOut: false`.
 
 ## Phase 4: Reload And Continuation
 

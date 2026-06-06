@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 3 first slice
+Status: Phase 3 complete
 Date: 2026-06-06
 
 ## Thesis
@@ -93,12 +93,12 @@ The current MCP surface exposes:
 - `codex_threads_list`
 - `codex_mcp_status_list`
 - `codex_thread_context`
+- `codex_operation_read`
+- `codex_operation_wait`
 - `codex-session-manager://operations`
 
 Planned next tools:
 
-- `codex_operation_wait`
-- `codex_operation_read`
 - `codex_mcp_reload`
 - `codex_session_continue`
 - `codex_session_launch`
@@ -113,7 +113,8 @@ Phase 3 proved an important boundary:
   still cannot call it.
 - An additional same-thread continuation after reload can still remain stale.
 - A replacement/fresh remote TUI for the same thread saw
-  `codex_thread_context` and called it successfully.
+  `codex_thread_context`, `codex_operation_read`, and `codex_operation_wait`
+  and called them successfully.
 
 This reinforces the validation rule: `mcpServerStatus/list` is diagnostic, and
 final MCP proof requires an actual model-callable invocation at the correct

@@ -7,7 +7,13 @@ import {
   mcpStatusListInputSchema,
   threadsListInputSchema,
 } from './tools/app-server.js';
-import { operationStore } from './tools/operations.js';
+import {
+  buildOperationReadPayload,
+  buildOperationWaitPayload,
+  operationReadInputSchema,
+  operationStore,
+  operationWaitInputSchema,
+} from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
 import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
 import { packageName, packageVersion } from './version.js';
@@ -115,6 +121,50 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = await buildThreadContextPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_operation_read',
+    {
+      title: 'Read Operation',
+      description: 'Read an in-memory session-manager operation by id.',
+      inputSchema: operationReadInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = buildOperationReadPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_operation_wait',
+    {
+      title: 'Wait For Operation',
+      description: 'Wait for an in-memory session-manager operation to complete or fail.',
+      inputSchema: operationWaitInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = await buildOperationWaitPayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

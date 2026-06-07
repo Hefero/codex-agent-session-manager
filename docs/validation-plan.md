@@ -148,6 +148,9 @@ Current checks:
 - deinitialize project-scoped scaffold with dry-run-by-default semantics,
   `--confirm` for real edits, and `--remove-runtime` before deleting local
   runtime state.
+- remove empty scratch npm project remnants only through explicit
+  `--remove-empty-npm-project`, refusing when dependencies or custom scripts
+  remain, and remove `.codex/` only when empty.
 - keep managed npm MCP blocks created by `mcp add npm` unless
   `--remove-added-mcps` is explicitly passed.
 - keep direct MCP SDK calls classified as diagnostic only; final proof remains

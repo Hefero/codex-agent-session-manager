@@ -203,6 +203,11 @@ Phase 10 also adds project teardown:
 - `deinit` edits project files only. It does not stop a running App Server,
   remote TUI, or already-loaded MCP server processes, so active sessions should
   be stopped or reloaded before package uninstall when process teardown matters.
+- Scratch workspace cleanup has explicit opt-ins:
+  `--remove-empty-npm-project` deletes package metadata, lockfile, and
+  `node_modules` only after generated scripts/dependencies are gone and no
+  custom scripts remain; `--remove-empty-codex-dir` deletes `.codex/` only when
+  it is empty.
 
 Phase 5 starts with safe remote TUI cleanup:
 

@@ -1,6 +1,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   unlinkSync,
@@ -39,6 +40,8 @@ interface ParsedDeinitArgs {
   json?: boolean;
   removeRuntime?: boolean;
   removeAddedMcps?: boolean;
+  removeEmptyNpmProject?: boolean;
+  removeEmptyCodexDir?: boolean;
   help?: boolean;
 }
 
@@ -79,6 +82,11 @@ Options:
   --json                 Print machine-readable JSON output.
   --remove-runtime       Remove local .codex-agent-session-manager/ runtime state.
   --remove-added-mcps    Remove MCP server blocks created by "mcp add npm".
+  --remove-empty-npm-project
+                         Remove package.json, package-lock.json, and node_modules
+                         only when package.json has no dependencies and no custom scripts.
+  --remove-empty-codex-dir
+                         Remove .codex/ only when it is empty after config cleanup.
   --help                 Show this help.
 `;
 }
@@ -124,6 +132,12 @@ export function parseDeinitArgs(argv: readonly string[]): ParsedDeinitArgs {
         break;
       case '--remove-added-mcps':
         options.removeAddedMcps = true;
+        break;
+      case '--remove-empty-npm-project':
+        options.removeEmptyNpmProject = true;
+        break;
+      case '--remove-empty-codex-dir':
+        options.removeEmptyCodexDir = true;
         break;
       case '--help':
       case '-h':
@@ -289,6 +303,32 @@ function removeGeneratedPackageScripts(content: string | null): string | null {
   return changed ? `${JSON.stringify(parsed, null, 2)}\n` : content;
 }
 
+function hasNonEmptyRecord(value: unknown): boolean {
+  return isRecord(value) && Object.keys(value).length > 0;
+}
+
+function hasCustomScripts(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length === 0) return false;
+  return !(entries.length === 1 && entries[0]?.[0] === 'test' && entries[0]?.[1] === 'echo "Error: no test specified" && exit 1');
+}
+
+function isEmptyNpmProjectPackageJson(content: string | null): boolean {
+  if (content === null) return false;
+  const parsed = JSON.parse(stripBom(content)) as unknown;
+  if (!isRecord(parsed)) return false;
+  return !hasNonEmptyRecord(parsed.dependencies)
+    && !hasNonEmptyRecord(parsed.devDependencies)
+    && !hasNonEmptyRecord(parsed.optionalDependencies)
+    && !hasNonEmptyRecord(parsed.peerDependencies)
+    && !hasCustomScripts(parsed.scripts);
+}
+
+function directoryIsEmpty(path: string): boolean {
+  return existsSync(path) && readdirSync(path).length === 0;
+}
+
 function previewPath(path: string, workspace: string): string {
   const normalizedWorkspace = workspace.toLowerCase();
   const normalizedPath = path.toLowerCase();
@@ -375,13 +415,53 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
 
   const packageJsonPath = workspacePath(workspace, 'package.json');
   const packageCurrent = readTextIfExists(packageJsonPath);
+  const packageAfterScriptRemoval = removeGeneratedPackageScripts(packageCurrent);
+  const removeEmptyNpmProject = options.removeEmptyNpmProject === true;
+  const packageNext = removeEmptyNpmProject && isEmptyNpmProjectPackageJson(packageAfterScriptRemoval)
+    ? null
+    : packageAfterScriptRemoval;
   maybeAddFileUpdate(
     plan,
     packageJsonPath,
     packageCurrent,
-    removeGeneratedPackageScripts(packageCurrent),
-    'remove generated npm scripts',
+    packageNext,
+    packageNext === null && packageCurrent !== null
+      ? 'remove empty npm project metadata'
+      : 'remove generated npm scripts',
   );
+  if (removeEmptyNpmProject) {
+    if (packageNext === null) {
+      const packageLockPath = workspacePath(workspace, 'package-lock.json');
+      maybeAddFileUpdate(
+        plan,
+        packageLockPath,
+        readTextIfExists(packageLockPath),
+        null,
+        'remove empty npm project lockfile',
+      );
+      const nodeModulesPath = workspacePath(workspace, 'node_modules');
+      if (existsSync(nodeModulesPath)) {
+        plan.actions.push({
+          kind: 'delete',
+          target: nodeModulesPath,
+          reason: 'remove empty npm project node_modules directory',
+        });
+        plan.directoryDeletes.push(nodeModulesPath);
+      } else {
+        plan.actions.push({
+          kind: 'noop',
+          target: nodeModulesPath,
+          reason: 'node_modules directory not found',
+        });
+      }
+    } else {
+      plan.actions.push({
+        kind: 'skip',
+        target: packageJsonPath,
+        reason: 'empty npm project removal requires package.json without dependencies or custom scripts',
+      });
+    }
+  }
 
   const agentsPath = workspacePath(workspace, 'AGENTS.md');
   const agentsCurrent = readTextIfExists(agentsPath);
@@ -394,6 +474,23 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
   );
 
   addRuntimeAction(plan, options.removeRuntime === true);
+  const codexDirPath = workspacePath(workspace, '.codex');
+  if (options.removeEmptyCodexDir === true) {
+    if (directoryIsEmpty(codexDirPath)) {
+      plan.actions.push({
+        kind: 'delete',
+        target: codexDirPath,
+        reason: 'remove empty .codex directory',
+      });
+      plan.directoryDeletes.push(codexDirPath);
+    } else {
+      plan.actions.push({
+        kind: existsSync(codexDirPath) ? 'skip' : 'noop',
+        target: codexDirPath,
+        reason: existsSync(codexDirPath) ? '.codex directory is not empty' : '.codex directory not found',
+      });
+    }
+  }
   plan.packagesToUninstall.sort();
   return plan;
 }

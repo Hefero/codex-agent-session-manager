@@ -162,6 +162,25 @@ for `remote` can own both the remote TUI and App Server. The matcher now avoids
 climbing to a wrapper root that also has an App Server child, so session cleanup
 does not silently cross the App Server lifecycle boundary.
 
+### H-009: scratch cleanup left npm skeleton files behind
+
+Status: fixed in working tree for alpha.3.
+
+The Desktop Commander cleanup replay showed that the safe teardown path
+(`deinit`, App Server stop, and `npm uninstall`) removed MCP config, runtime
+state, live processes, and dependencies, but npm still left a scratch
+`package.json`, `package-lock.json`, `node_modules/.package-lock.json`, empty
+scope directories, and an empty `.codex/` directory. Removing those with raw
+shell deletion would violate the operator-facing cleanup workflow.
+
+The fix adds explicit deinit opt-ins for scratch workspaces:
+
+- `--remove-empty-npm-project` removes `package.json`, `package-lock.json`, and
+  `node_modules` only when package metadata has no dependency fields and no
+  custom scripts.
+- `--remove-empty-codex-dir` removes `.codex/` only when the directory is
+  empty.
+
 ## Accepted / Deferred Risks
 
 ### D-001: custom `OperationStore({ stateFile })` is intentionally unbounded

@@ -32,6 +32,8 @@ test('parseDeinitArgs maps workspace, confirm, json, runtime, and added MCP remo
       '--json',
       '--remove-runtime',
       '--remove-added-mcps',
+      '--remove-empty-npm-project',
+      '--remove-empty-codex-dir',
     ]),
     {
       workspace: 'project-a',
@@ -39,6 +41,8 @@ test('parseDeinitArgs maps workspace, confirm, json, runtime, and added MCP remo
       json: true,
       removeRuntime: true,
       removeAddedMcps: true,
+      removeEmptyNpmProject: true,
+      removeEmptyCodexDir: true,
     },
   );
 });
@@ -134,6 +138,67 @@ test('deinit preserves custom scripts and unrelated file content', () => {
     };
     assert.deepEqual(packageJson.scripts, { 'codex:remote': 'custom-command' });
     assert.equal(readFileSync(join(workspace, 'AGENTS.md'), 'utf8'), '# Existing\n');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('deinit can remove an explicitly empty npm scratch project', () => {
+  const workspace = tempWorkspace();
+  try {
+    mkdirSync(join(workspace, '.codex'), { recursive: true });
+    mkdirSync(join(workspace, 'node_modules', '@scope'), { recursive: true });
+    writeFileSync(
+      join(workspace, 'package.json'),
+      `${JSON.stringify({
+        name: 'scratch',
+        version: '1.0.0',
+        scripts: {
+          test: 'echo "Error: no test specified" && exit 1',
+        },
+      }, null, 2)}\n`,
+    );
+    writeFileSync(join(workspace, 'package-lock.json'), '{}\n');
+    writeFileSync(join(workspace, 'node_modules', '.package-lock.json'), '{}\n');
+
+    const plan = buildDeinitPlan({
+      workspace,
+      confirm: true,
+      removeEmptyNpmProject: true,
+      removeEmptyCodexDir: true,
+    });
+    applyDeinitPlan(plan);
+
+    assert.equal(existsSync(join(workspace, 'package.json')), false);
+    assert.equal(existsSync(join(workspace, 'package-lock.json')), false);
+    assert.equal(existsSync(join(workspace, 'node_modules')), false);
+    assert.equal(existsSync(join(workspace, '.codex')), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('deinit refuses empty npm project removal when dependencies or custom scripts remain', () => {
+  const workspace = tempWorkspace();
+  try {
+    writeFileSync(
+      join(workspace, 'package.json'),
+      `${JSON.stringify({
+        name: 'real-project',
+        scripts: {
+          build: 'tsc',
+        },
+        dependencies: {
+          leftpad: '1.0.0',
+        },
+      }, null, 2)}\n`,
+    );
+
+    const plan = buildDeinitPlan({ workspace, confirm: true, removeEmptyNpmProject: true });
+    applyDeinitPlan(plan);
+
+    assert.equal(existsSync(join(workspace, 'package.json')), true);
+    assert.match(JSON.stringify(plan.actions), /empty npm project removal requires/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

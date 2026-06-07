@@ -50,9 +50,11 @@ The smoke must prove:
 - CLI help lists the public App Server, MCP refresh, and session commands.
 - CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
 - CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
-  writing files.
+  writing files and shows `--ignore-scripts` by default.
 - Real CLI/MCP `mcp add npm` execution requires `--confirm` or
   `dryRun:false, confirm:true`.
+- Real CLI/MCP `mcp add npm` execution suppresses npm lifecycle scripts unless
+  `--allow-scripts` / `allowScripts:true` is explicitly selected.
 - CLI App Server start dry-run emits JSON with `dryRun:true` and the requested
   loopback URL.
 - CLI init dry-run emits human-readable output for a temporary workspace
@@ -128,7 +130,8 @@ Current checks:
 - expose public CLI commands for App Server lifecycle, MCP refresh, and session
   launch/close/replace over the same guarded operation builders used by MCP.
 - expose an agent-facing npm MCP installer that writes project-scoped
-  `.codex/config.toml` blocks without editing user global Codex config.
+  `.codex/config.toml` blocks without editing user global Codex config and
+  without running npm lifecycle scripts by default.
 - keep public CLI operation output JSON by default and preserve
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.

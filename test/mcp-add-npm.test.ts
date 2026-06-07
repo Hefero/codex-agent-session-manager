@@ -50,6 +50,8 @@ test('mcp add npm dry-run previews package install and config update without wri
     assert.equal(payload.workspace, '<workspace>');
     assert.equal(payload.packageName, '@modelcontextprotocol/server-everything');
     assert.equal(payload.serverName, 'everything');
+    assert.equal(payload.lifecycleScriptsAllowed, false);
+    assert.match(JSON.stringify(payload), /--ignore-scripts/u);
     assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), false);
     assert.equal(existsSync(join(workspace, 'package.json')), false);
     assert.doesNotMatch(JSON.stringify(payload), new RegExp(escapeRegExp(workspace), 'u'));
@@ -90,6 +92,8 @@ test('mcp add npm refuses real install without confirm', () => {
 test('mcp add npm installs locally and writes a marked project MCP config block', () => {
   const workspace = tempWorkspace();
   try {
+    const npmCalls: string[][] = [];
+    const fakeInstaller = fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js');
     const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
       {
         packageSpec: '@modelcontextprotocol/server-everything',
@@ -98,13 +102,18 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
         confirm: true,
       },
       {
-        npmRunner: fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js'),
+        npmRunner: (args, options) => {
+          npmCalls.push([...args]);
+          return fakeInstaller(args, options);
+        },
       },
     ));
 
     assert.equal(payload.ok, true);
     assert.equal(payload.dryRun, false);
     assert.equal(payload.confirmRequired, false);
+    assert.equal(payload.lifecycleScriptsAllowed, false);
+    assert.deepEqual(npmCalls, [['install', '--save-dev', '--ignore-scripts', '@modelcontextprotocol/server-everything']]);
     assert.deepEqual(payload.args, [
       'node_modules/@modelcontextprotocol/server-everything/dist/index.js',
       'stdio',
@@ -120,6 +129,35 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
       private?: boolean;
     };
     assert.equal(packageJson.private, true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('mcp add npm can explicitly allow npm lifecycle scripts', () => {
+  const workspace = tempWorkspace();
+  try {
+    const npmCalls: string[][] = [];
+    const fakeInstaller = fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js');
+    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+      {
+        packageSpec: '@modelcontextprotocol/server-everything',
+        serverName: 'everything',
+        dryRun: false,
+        confirm: true,
+        allowScripts: true,
+      },
+      {
+        npmRunner: (args, options) => {
+          npmCalls.push([...args]);
+          return fakeInstaller(args, options);
+        },
+      },
+    ));
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.lifecycleScriptsAllowed, true);
+    assert.deepEqual(npmCalls, [['install', '--save-dev', '@modelcontextprotocol/server-everything']]);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

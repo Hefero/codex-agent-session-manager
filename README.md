@@ -134,9 +134,11 @@ machine-readable form.
 
 `mcp add npm` defaults to dry-run. With `--confirm`, it installs an npm MCP
 package locally and writes only the project-scoped `.codex/config.toml`. It
-does not edit the user's global Codex config and it does not count as callable
-proof; run `mcp refresh` and validate with a real tool call from the
-continuation.
+does not edit the user's global Codex config. The install uses
+`--ignore-scripts` by default; pass `--allow-scripts` only when the selected
+package requires npm lifecycle scripts during install. The install does not
+count as callable proof; run `mcp refresh` and validate with a real tool call
+from the continuation.
 
 ## Development
 

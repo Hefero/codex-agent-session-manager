@@ -172,6 +172,9 @@ Phase 10 package bootstrap adds an agent-facing npm MCP installer:
   require `dryRun: false` and `confirm: true`.
 - With confirmation, it installs an npm MCP package into the current project
   and writes a marked project-scoped `.codex/config.toml` block.
+- npm install runs with `--ignore-scripts` by default. `allowScripts: true`
+  or CLI `--allow-scripts` is an explicit opt-in for packages that require
+  lifecycle scripts.
 - The generated server command uses `node` plus the installed package
   entrypoint instead of npm command shims.
 - Existing unmanaged `[mcp_servers.<name>]` sections are not overwritten.

@@ -216,6 +216,7 @@ try {
     cliMcpAdd.status !== 0
     || !cliMcpAdd.stdout.includes('"dryRun": true')
     || !cliMcpAdd.stdout.includes('"serverName": "everything"')
+    || !cliMcpAdd.stdout.includes('--ignore-scripts')
     || !cliMcpAdd.stdout.includes('codex_mcp_refresh')
   ) {
     throw new Error(`Unexpected CLI mcp add npm dry-run result: stdout=${cliMcpAdd.stdout} stderr=${cliMcpAdd.stderr}`);

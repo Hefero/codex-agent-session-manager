@@ -90,6 +90,7 @@ test('parsePublicCommand maps mcp add npm', () => {
       'everything',
       '--arg',
       'stdio',
+      '--allow-scripts',
       '--dry-run',
     ]),
     {
@@ -99,6 +100,7 @@ test('parsePublicCommand maps mcp add npm', () => {
         packageSpec: '@modelcontextprotocol/server-everything',
         serverName: 'everything',
         extraArgs: ['stdio'],
+        allowScripts: true,
         dryRun: true,
       },
     },

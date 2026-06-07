@@ -211,10 +211,10 @@ export function createMcpServer(): McpServer {
 
   server.registerTool(
     'codex_mcp_add_npm',
-    {
-      title: 'Add npm MCP Server',
-      description: 'Install an npm MCP package locally and register a project-scoped .codex/config.toml server block. Callable proof still requires codex_mcp_refresh and a real tool call from the continuation.',
-      inputSchema: mcpAddNpmInputSchema,
+      {
+        title: 'Add npm MCP Server',
+        description: 'Install an npm MCP package locally with lifecycle scripts disabled by default and register a project-scoped .codex/config.toml server block. Callable proof still requires codex_mcp_refresh and a real tool call from the continuation.',
+        inputSchema: mcpAddNpmInputSchema,
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

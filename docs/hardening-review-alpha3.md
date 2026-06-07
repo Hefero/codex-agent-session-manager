@@ -102,22 +102,34 @@ The fix revalidates those internal workspaces with `resolveWorkspaceRoot`.
 Operation children now fail early if the workspace no longer exists or is not a
 valid workspace root before touching state or selecting processes.
 
+### H-006: npm MCP install ran lifecycle scripts by default after confirmation
+
+Status: fixed in working tree for alpha.3.
+
+Before this pass, `mcp add npm --confirm` used standard
+`npm install --save-dev`. That could run npm lifecycle scripts from the
+selected package during install. MCP servers are executable code, but install
+scripts are an earlier and less visible execution surface than the configured
+MCP command itself.
+
+The fix changes the default install command to:
+
+```text
+npm install --save-dev --ignore-scripts <package>
+```
+
+Packages that genuinely require lifecycle scripts can still be installed with
+explicit opt-in:
+
+- MCP input: `allowScripts:true`
+- CLI flag: `--allow-scripts`
+
+Dry-run evidence now shows the selected install command and reports whether
+lifecycle scripts are allowed.
+
 ## Accepted / Deferred Risks
 
-### D-001: npm lifecycle scripts still run after explicit confirmation
-
-`mcp add npm --confirm` uses standard `npm install --save-dev`. That can run
-npm lifecycle scripts from the selected package. This is acceptable for the
-current alpha because the operation now requires explicit confirmation and MCP
-servers are executable code anyway.
-
-Possible future hardening:
-
-- add `ignoreScripts:true` / `--ignore-scripts` default;
-- add an `allowScripts:true` opt-in for packages that need install scripts;
-- report when the package has lifecycle scripts after install.
-
-### D-002: custom `OperationStore({ stateFile })` is intentionally unbounded
+### D-001: custom `OperationStore({ stateFile })` is intentionally unbounded
 
 The default operation store path is workspace-bounded. A custom `stateFile`
 option remains unbounded for tests and internal diagnostics. It is not exposed

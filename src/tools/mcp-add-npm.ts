@@ -42,6 +42,10 @@ export const mcpAddNpmInputSchema = {
     .max(MAX_EXTRA_ARGS)
     .optional()
     .describe('Extra args passed after the package entrypoint. Defaults to ["stdio"].'),
+  allowScripts: z
+    .boolean()
+    .optional()
+    .describe('Defaults false. When false, npm install uses --ignore-scripts so package lifecycle scripts do not run during install.'),
   dryRun: z.boolean().optional().describe('Defaults true. Preview the local npm install and project config update without changing files.'),
   confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
 };
@@ -145,6 +149,13 @@ function npmSpawnCommand(args: readonly string[]): { command: string; args: stri
     return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm', ...args] };
   }
   return { command: 'npm', args: [...args] };
+}
+
+function npmInstallArgs(input: { packageSpec: string; allowScripts: boolean }): string[] {
+  const args = ['install', '--save-dev'];
+  if (!input.allowScripts) args.push('--ignore-scripts');
+  args.push(input.packageSpec);
+  return args;
 }
 
 function runNpm(args: readonly string[], options: { cwd: string }): NpmRunResult {
@@ -281,7 +292,9 @@ export function buildMcpAddNpmPayload(
 
   const dryRun = parsed.dryRun ?? true;
   const confirm = parsed.confirm === true;
+  const allowScripts = parsed.allowScripts === true;
   const extraArgs = parsed.extraArgs ?? [DEFAULT_TRANSPORT_ARG];
+  const installArgs = npmInstallArgs({ packageSpec: parsed.packageSpec, allowScripts });
   const actions: McpAddNpmAction[] = [];
   const configPath = workspacePath(workspace, '.codex', 'config.toml');
   const configCurrent = readTextIfExists(configPath);
@@ -295,7 +308,7 @@ export function buildMcpAddNpmPayload(
     kind: 'run',
     target: '<workspace>',
     reason: 'install npm MCP package as a project devDependency',
-    command: ['npm', 'install', '--save-dev', parsed.packageSpec],
+    command: ['npm', ...installArgs],
   });
 
   if (dryRun) {
@@ -313,6 +326,7 @@ export function buildMcpAddNpmPayload(
       packageSpec: parsed.packageSpec,
       packageName,
       serverName,
+      lifecycleScriptsAllowed: allowScripts,
       actions,
       nextAction: 'Run with dryRun:false and confirm:true, then call codex_mcp_refresh with an explicit threadId and let the current turn finish so the continuation can call the new MCP tool.',
     };
@@ -333,6 +347,7 @@ export function buildMcpAddNpmPayload(
       packageSpec: parsed.packageSpec,
       packageName,
       serverName,
+      lifecycleScriptsAllowed: allowScripts,
       actions,
       message: 'Pass confirm:true with dryRun:false to install an npm MCP package and update project config.',
     };
@@ -345,7 +360,7 @@ export function buildMcpAddNpmPayload(
 
   assertWorkspacePath(workspace, workspacePath(workspace, 'node_modules'));
   const runner = deps.npmRunner ?? runNpm;
-  const npmResult = runner(['install', '--save-dev', parsed.packageSpec], { cwd: workspace });
+  const npmResult = runner(installArgs, { cwd: workspace });
   if (npmResult.error !== undefined || npmResult.status !== 0) {
     const reason = (npmResult.error?.message ?? npmResult.stderr.trim()) || 'unknown error';
     throw new Error(`npm install failed for ${parsed.packageSpec}: ${reason}`);
@@ -382,6 +397,7 @@ export function buildMcpAddNpmPayload(
     packageSpec: parsed.packageSpec,
     packageName,
     serverName,
+    lifecycleScriptsAllowed: allowScripts,
     command: 'node',
     args: [`node_modules/${packageInfo.packageName}/${packageInfo.entrypoint}`, ...extraArgs],
     actions,

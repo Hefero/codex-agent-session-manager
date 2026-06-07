@@ -13,6 +13,7 @@ const MAX_PROMPT_CHARS = 4_000;
 const MAX_PROMPT_FILE_BYTES = 16_384;
 
 const booleanFlags = new Set([
+  'allow-scripts',
   'bypass-sandbox',
   'confirm',
   'dry-run',
@@ -68,7 +69,7 @@ App Server:
 
 MCP:
   add npm: --server-name <name> --entrypoint <package-relative-js>
-           --arg <value> --dry-run --confirm
+           --arg <value> --dry-run --confirm --allow-scripts
   refresh: --highlight-tool <name> --continuation-timeout-ms <ms>
            --continuation-poll-ms <ms> --continuation-stable-ms <ms>
 
@@ -226,6 +227,7 @@ function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: read
     addOptional(input, 'serverName', stringFlag(flags, 'server-name'));
     addOptional(input, 'entrypoint', stringFlag(flags, 'entrypoint'));
     addOptional(input, 'extraArgs', stringListFlag(flags, 'arg'));
+    if (hasFlag(flags, 'allow-scripts')) input.allowScripts = true;
     addDryRunConfirm(input, flags);
     return { command: 'mcp', subcommand: 'add-npm', input };
   }

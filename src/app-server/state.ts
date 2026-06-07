@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+
+import { assertWorkspacePath, workspacePath } from '../security/workspace.js';
 
 export const PRIMARY_STATE_DIR_NAME = '.codex-agent-session-manager';
 export const LEGACY_STATE_DIR_NAME = '.codex-mcp-hot-reloader';
@@ -50,7 +52,7 @@ function stateDirName(source: AppServerStateSource): string {
 }
 
 export function appServerStateFileForWorkspace(workspace = process.cwd(), source: AppServerStateSource = 'primary'): string {
-  return join(resolve(workspace), stateDirName(source), 'state', 'app-server.json');
+  return workspacePath(workspace, stateDirName(source), 'state', 'app-server.json');
 }
 
 export function readAppServerStateFile(stateFile: string, source: AppServerStateSource): AppServerStateRead {
@@ -109,6 +111,7 @@ export function readWorkspaceAppServerStates(
 
 export function writeAppServerState(state: AppServerState, workspace = process.cwd()): string {
   const stateFile = appServerStateFileForWorkspace(workspace, 'primary');
+  assertWorkspacePath(workspace, stateFile);
   mkdirSync(dirname(stateFile), { recursive: true });
   const tempFile = `${stateFile}.${process.pid}.tmp`;
   writeFileSync(tempFile, `${JSON.stringify(state, null, 2)}\n`);

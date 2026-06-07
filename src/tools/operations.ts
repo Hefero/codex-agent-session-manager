@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
+
+import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from '../security/workspace.js';
 
 export const operationStatuses = ['pending', 'running', 'completed', 'failed'] as const;
 export type OperationStatus = (typeof operationStatuses)[number];
@@ -59,7 +61,7 @@ const MAX_POLL_MS = 5_000;
 const STATE_DIR_NAME = '.codex-agent-session-manager';
 
 export function operationStateFileForWorkspace(workspace = process.cwd()): string {
-  return join(resolve(workspace), STATE_DIR_NAME, 'state', 'operations.json');
+  return workspacePath(workspace, STATE_DIR_NAME, 'state', 'operations.json');
 }
 
 function nowIso(): string {
@@ -135,10 +137,19 @@ function operationFromUnknown(value: unknown): OperationRecord | null {
 export class OperationStore {
   private readonly operations = new Map<string, OperationRecord>();
   private readonly stateFile: string | null;
+  private readonly workspaceRoot: string | null;
 
   constructor(options: OperationStoreOptions = {}) {
-    this.stateFile =
-      options.durable === false ? null : resolve(options.stateFile ?? operationStateFileForWorkspace(options.workspace));
+    if (options.durable === false) {
+      this.stateFile = null;
+      this.workspaceRoot = null;
+    } else if (options.stateFile !== undefined) {
+      this.stateFile = resolve(options.stateFile);
+      this.workspaceRoot = null;
+    } else {
+      this.workspaceRoot = resolveWorkspaceRoot(options.workspace);
+      this.stateFile = operationStateFileForWorkspace(this.workspaceRoot);
+    }
     this.loadFromDisk();
   }
 
@@ -292,6 +303,7 @@ export class OperationStore {
 
   private saveToDisk(): void {
     if (!this.stateFile) return;
+    if (this.workspaceRoot !== null) assertWorkspacePath(this.workspaceRoot, this.stateFile);
 
     const operations = [...this.operations.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(cloneOperation);
     const payload = {

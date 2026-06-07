@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, normalize, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, normalize } from 'node:path';
 import { z } from 'zod';
 
 import { redactValue } from '../security/redaction.js';
+import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from '../security/workspace.js';
 
 const DEFAULT_TRANSPORT_ARG = 'stdio';
 const CONFIG_MARKER_PREFIX = '# BEGIN codex-agent-session-manager:mcp-add:';
@@ -41,7 +42,8 @@ export const mcpAddNpmInputSchema = {
     .max(MAX_EXTRA_ARGS)
     .optional()
     .describe('Extra args passed after the package entrypoint. Defaults to ["stdio"].'),
-  dryRun: z.boolean().optional().describe('Preview the local npm install and project config update without changing files.'),
+  dryRun: z.boolean().optional().describe('Defaults true. Preview the local npm install and project config update without changing files.'),
+  confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
 };
 
 const mcpAddNpmInputObject = z.object(mcpAddNpmInputSchema);
@@ -84,6 +86,10 @@ function readTextIfExists(path: string): string | null {
   return existsSync(path) ? readFileSync(path, 'utf8') : null;
 }
 
+function validPackageVersionPart(value: string): boolean {
+  return value.length > 0 && /^[A-Za-z0-9._+~^*-]+$/u.test(value);
+}
+
 function parseRegistryPackageName(spec: string): string | null {
   const trimmed = spec.trim();
   if (trimmed !== spec || trimmed.length === 0 || /[\s:\\]/u.test(trimmed)) return null;
@@ -93,11 +99,15 @@ function parseRegistryPackageName(spec: string): string | null {
     if (slashIndex < 0) return null;
     const versionIndex = trimmed.indexOf('@', slashIndex + 1);
     const name = versionIndex >= 0 ? trimmed.slice(0, versionIndex) : trimmed;
+    const versionPart = versionIndex >= 0 ? trimmed.slice(versionIndex + 1) : null;
+    if (versionPart !== null && !validPackageVersionPart(versionPart)) return null;
     return /^@[a-z0-9._-]+\/[a-z0-9._-]+$/u.test(name) ? name : null;
   }
 
   const versionIndex = trimmed.indexOf('@');
   const name = versionIndex >= 0 ? trimmed.slice(0, versionIndex) : trimmed;
+  const versionPart = versionIndex >= 0 ? trimmed.slice(versionIndex + 1) : null;
+  if (versionPart !== null && !validPackageVersionPart(versionPart)) return null;
   return /^[a-z0-9._-]+$/u.test(name) ? name : null;
 }
 
@@ -156,7 +166,7 @@ function runNpm(args: readonly string[], options: { cwd: string }): NpmRunResult
 }
 
 function packageJsonPathFor(workspace: string, packageName: string): string {
-  return join(workspace, 'node_modules', ...packageName.split('/'), 'package.json');
+  return workspacePath(workspace, 'node_modules', ...packageName.split('/'), 'package.json');
 }
 
 function validatePackageEntrypoint(entrypoint: string): string {
@@ -262,21 +272,22 @@ export function buildMcpAddNpmPayload(
   } = {},
 ): Record<string, unknown> {
   const parsed = mcpAddNpmInputObject.parse(input);
-  const workspace = resolve(process.cwd());
+  const workspace = resolveWorkspaceRoot(process.cwd());
   const packageName = parseRegistryPackageName(parsed.packageSpec);
   if (packageName === null) throw new Error(`Unsupported npm package spec: ${parsed.packageSpec}`);
 
   const serverName = parsed.serverName ?? defaultServerName(packageName);
   serverNameSchema.parse(serverName);
 
-  const dryRun = parsed.dryRun === true;
+  const dryRun = parsed.dryRun ?? true;
+  const confirm = parsed.confirm === true;
   const extraArgs = parsed.extraArgs ?? [DEFAULT_TRANSPORT_ARG];
   const actions: McpAddNpmAction[] = [];
-  const configPath = join(workspace, '.codex', 'config.toml');
+  const configPath = workspacePath(workspace, '.codex', 'config.toml');
   const configCurrent = readTextIfExists(configPath);
   assertNoUnmanagedServerConflict(configCurrent, serverName);
 
-  const packageJsonPath = join(workspace, 'package.json');
+  const packageJsonPath = workspacePath(workspace, 'package.json');
   const packageJsonCurrent = readTextIfExists(packageJsonPath);
   const packageJsonNext = packageJsonCurrent ?? minimalPackageJson(workspace);
   actions.push(actionForFile(packageJsonPath, packageJsonCurrent, packageJsonNext, workspace, 'ensure local npm project metadata exists'));
@@ -297,19 +308,42 @@ export function buildMcpAddNpmPayload(
     return {
       ok: true,
       dryRun: true,
+      confirmRequired: !confirm,
       workspace: '<workspace>',
       packageSpec: parsed.packageSpec,
       packageName,
       serverName,
       actions,
-      nextAction: 'Run without dryRun, then call codex_mcp_refresh with an explicit threadId and let the current turn finish so the continuation can call the new MCP tool.',
+      nextAction: 'Run with dryRun:false and confirm:true, then call codex_mcp_refresh with an explicit threadId and let the current turn finish so the continuation can call the new MCP tool.',
+    };
+  }
+
+  if (!confirm) {
+    actions.push({
+      kind: 'update',
+      target: previewPath(configPath, workspace),
+      reason: 'register project-scoped Codex MCP server after package entrypoint resolution',
+    });
+    return {
+      ok: false,
+      refused: true,
+      dryRun: false,
+      confirmRequired: true,
+      workspace: '<workspace>',
+      packageSpec: parsed.packageSpec,
+      packageName,
+      serverName,
+      actions,
+      message: 'Pass confirm:true with dryRun:false to install an npm MCP package and update project config.',
     };
   }
 
   if (packageJsonCurrent === null) {
+    assertWorkspacePath(workspace, packageJsonPath);
     writeFileSync(packageJsonPath, packageJsonNext, 'utf8');
   }
 
+  assertWorkspacePath(workspace, workspacePath(workspace, 'node_modules'));
   const runner = deps.npmRunner ?? runNpm;
   const npmResult = runner(['install', '--save-dev', parsed.packageSpec], { cwd: workspace });
   if (npmResult.error !== undefined || npmResult.status !== 0) {
@@ -335,6 +369,7 @@ export function buildMcpAddNpmPayload(
   );
   actions.push(actionForFile(configPath, configCurrent, configNext, workspace, 'register project-scoped Codex MCP server'));
   if (configCurrent !== configNext) {
+    assertWorkspacePath(workspace, configPath);
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(configPath, configNext, 'utf8');
   }
@@ -342,6 +377,7 @@ export function buildMcpAddNpmPayload(
   return {
     ok: true,
     dryRun: false,
+    confirmRequired: false,
     workspace: '<workspace>',
     packageSpec: parsed.packageSpec,
     packageName,

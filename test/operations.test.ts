@@ -12,7 +12,9 @@ import {
 } from '../src/tools/operations.js';
 
 function tempWorkspace(): string {
-  return join(tmpdir(), `codex-agent-session-manager-ops-${crypto.randomUUID()}`);
+  const workspace = join(tmpdir(), `codex-agent-session-manager-ops-${crypto.randomUUID()}`);
+  mkdirSync(workspace, { recursive: true });
+  return workspace;
 }
 
 function tempStore(): { workspace: string; stateFile: string; store: OperationStore; cleanup(): void } {

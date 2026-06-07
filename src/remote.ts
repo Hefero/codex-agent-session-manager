@@ -9,6 +9,7 @@ import { connectAppServerClient } from './app-server/client.js';
 import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState } from './app-server/state.js';
 import { redactArgv, redactSensitiveText, redactValue } from './security/redaction.js';
 import { isLoopbackHost, validateAppServerUrl } from './security/url.js';
+import { resolveWorkspaceRoot, workspacePath } from './security/workspace.js';
 import { buildCodexArgs, resolveCodexCommand } from './tools/session-launch.js';
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -255,7 +256,7 @@ async function resolveTargetUrl(
 function logPaths(workspace: string, appServerUrl: string): { stdoutLog: string; stderrLog: string } {
   const url = new URL(appServerUrl);
   const suffix = `${url.hostname.replace(/[^a-zA-Z0-9_.-]+/gu, '-')}-${url.port}`;
-  const logDir = join(workspace, WORKSPACE_STATE_DIR, 'logs');
+  const logDir = workspacePath(workspace, WORKSPACE_STATE_DIR, 'logs');
   return {
     stdoutLog: join(logDir, `codex-app-server-${suffix}.out.log`),
     stderrLog: join(logDir, `codex-app-server-${suffix}.err.log`),
@@ -324,8 +325,8 @@ export function prepareWindowsHiddenLauncherForWorkspace(workspace: string, dryR
   if (process.platform !== 'win32') return null;
   if (!existsSync(WINDOWS_HIDDEN_LAUNCHER_SOURCE)) return null;
 
-  const target = join(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_EXE);
-  const stampPath = join(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_STAMP);
+  const target = workspacePath(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_EXE);
+  const stampPath = workspacePath(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_STAMP);
   if (dryRun) return target;
 
   const sourceContent = readText(WINDOWS_HIDDEN_LAUNCHER_SOURCE);
@@ -342,7 +343,7 @@ function canLaunchThroughWindowsHiddenLauncher(command: string): boolean {
 }
 
 export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps = {}): Promise<RemotePlan> {
-  const workspace = resolve(options.workspace ?? process.cwd());
+  const workspace = resolveWorkspaceRoot(options.workspace ?? process.cwd());
   const codexCommand = (deps.codexCommandResolver ?? resolveCodexCommand)();
   const freePort = deps.freePort ?? findFreePort;
   const target = await resolveTargetUrl(options, workspace, { freePort });

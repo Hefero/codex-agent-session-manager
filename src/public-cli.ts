@@ -64,7 +64,7 @@ App Server:
 
 MCP:
   add npm: --server-name <name> --entrypoint <package-relative-js>
-           --arg <value> --dry-run
+           --arg <value> --dry-run --confirm
   refresh: --highlight-tool <name> --continuation-timeout-ms <ms>
            --continuation-poll-ms <ms> --continuation-stable-ms <ms>
 
@@ -207,7 +207,7 @@ function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: read
     addOptional(input, 'serverName', stringFlag(flags, 'server-name'));
     addOptional(input, 'entrypoint', stringFlag(flags, 'entrypoint'));
     addOptional(input, 'extraArgs', stringListFlag(flags, 'arg'));
-    if (hasFlag(flags, 'dry-run')) input.dryRun = true;
+    addDryRunConfirm(input, flags);
     return { command: 'mcp', subcommand: 'add-npm', input };
   }
 

@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import { PRIMARY_STATE_DIR_NAME } from './app-server/state.js';
 import { prepareWindowsHiddenLauncherForWorkspace } from './remote.js';
 import { redactValue } from './security/redaction.js';
+import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from './security/workspace.js';
 import { packageName, packageVersion } from './version.js';
 
 const MCP_SERVER_NAME = 'codex_agent_session_manager';
@@ -238,7 +239,8 @@ Useful commands:
 - \`npm run codex:init:dry-run\`
 - \`npm run codex:remote\`
 - \`npm run codex:remote:dry-run\`
-- \`${packageName} mcp add npm <package-spec>\`
+- \`${packageName} mcp add npm <package-spec> --dry-run\`
+- \`${packageName} mcp add npm <package-spec> --confirm\`
 - \`${packageName} mcp refresh --thread-id <thread-id>\`
 
 Treat App Server MCP status as diagnostic. Validate MCP changes with a real
@@ -272,7 +274,7 @@ function maybeAddFileUpdate(plan: InitPlan, path: string, current: string | null
 }
 
 export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
-  const workspace = resolve(options.workspace ?? process.cwd());
+  const workspace = resolveWorkspaceRoot(options.workspace ?? process.cwd());
   const dryRun = options.dryRun === true;
   const plan: InitPlan = {
     ok: true,
@@ -284,7 +286,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     windowsHiddenLauncherPath: prepareWindowsHiddenLauncherForWorkspace(workspace, true),
   };
 
-  const codexConfigPath = join(workspace, '.codex', 'config.toml');
+  const codexConfigPath = workspacePath(workspace, '.codex', 'config.toml');
   const codexConfigCurrent = readTextIfExists(codexConfigPath);
   maybeAddFileUpdate(
     plan,
@@ -294,7 +296,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     'register project-scoped MCP server',
   );
 
-  const gitignorePath = join(workspace, '.gitignore');
+  const gitignorePath = workspacePath(workspace, '.gitignore');
   const gitignoreCurrent = readTextIfExists(gitignorePath);
   maybeAddFileUpdate(
     plan,
@@ -304,7 +306,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     'ignore local session-manager runtime state',
   );
 
-  const packageJsonPath = join(workspace, 'package.json');
+  const packageJsonPath = workspacePath(workspace, 'package.json');
   const packageCurrent = readTextIfExists(packageJsonPath);
   const packageNext = packageJsonContent(packageCurrent);
   if (packageNext === null) {
@@ -317,7 +319,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     maybeAddFileUpdate(plan, packageJsonPath, packageCurrent, packageNext, 'add npm scripts and devDependency');
   }
 
-  const agentsPath = join(workspace, 'AGENTS.md');
+  const agentsPath = workspacePath(workspace, 'AGENTS.md');
   if (options.agents === false) {
     plan.actions.push({ kind: 'skip', target: agentsPath, reason: 'disabled by --no-agents' });
   } else {
@@ -344,6 +346,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
 
 export function applyInitPlan(plan: InitPlan): void {
   for (const update of plan.fileUpdates) {
+    assertWorkspacePath(plan.workspace, update.path);
     mkdirSync(dirname(update.path), { recursive: true });
     writeFileSync(update.path, update.content, 'utf8');
   }

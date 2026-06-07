@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -18,7 +18,9 @@ import { OperationStore } from '../src/tools/operations.js';
 const appServerUrl = 'ws://127.0.0.1:59919';
 
 function tempWorkspace(): string {
-  return join(tmpdir(), `codex-agent-session-manager-app-server-lifecycle-${crypto.randomUUID()}`);
+  const workspace = join(tmpdir(), `codex-agent-session-manager-app-server-lifecycle-${crypto.randomUUID()}`);
+  mkdirSync(workspace, { recursive: true });
+  return workspace;
 }
 
 function tempStore(): { workspace: string; store: OperationStore; cleanup(): void } {

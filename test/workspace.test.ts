@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { resolveWorkspaceCwd } from '../src/security/workspace.js';
+import { resolveWorkspaceCwd, resolveWorkspaceRoot, workspacePath } from '../src/security/workspace.js';
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -35,6 +35,26 @@ test('resolveWorkspaceCwd rejects lexical workspace escapes', () => {
   }
 });
 
+test('resolveWorkspaceRoot requires an existing workspace', () => {
+  const workspace = tempDir('codex-session-manager-workspace-');
+  const missing = join(workspace, 'missing');
+  try {
+    assert.throws(() => resolveWorkspaceRoot(missing), /must exist/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('workspacePath accepts managed children and rejects lexical escapes', () => {
+  const workspace = tempDir('codex-session-manager-workspace-');
+  try {
+    assert.equal(workspacePath(workspace, '.codex', 'config.toml'), resolve(workspace, '.codex', 'config.toml'));
+    assert.throws(() => workspacePath(workspace, '..', 'outside.txt'), /must stay inside/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('resolveWorkspaceCwd rejects symlink or junction workspace escapes', (t) => {
   const workspace = tempDir('codex-session-manager-workspace-');
   const outside = tempDir('codex-session-manager-outside-');
@@ -48,6 +68,25 @@ test('resolveWorkspaceCwd rejects symlink or junction workspace escapes', (t) =>
     }
 
     assert.throws(() => resolveWorkspaceCwd(join('outside-link', 'future'), workspace), /symlink or junction/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('workspacePath rejects symlink or junction managed path escapes', (t) => {
+  const workspace = tempDir('codex-session-manager-workspace-');
+  const outside = tempDir('codex-session-manager-outside-');
+  const link = join(workspace, '.codex');
+  try {
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('symlink or junction creation is unavailable in this environment');
+      return;
+    }
+
+    assert.throws(() => workspacePath(workspace, '.codex', 'config.toml'), /symlink or junction/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });

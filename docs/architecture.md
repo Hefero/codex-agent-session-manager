@@ -168,8 +168,10 @@ Phase 4 composition adds the default refresh workflow:
 
 Phase 10 package bootstrap adds an agent-facing npm MCP installer:
 
-- `codex_mcp_add_npm` installs an npm MCP package into the current project and
-  writes a marked project-scoped `.codex/config.toml` block.
+- `codex_mcp_add_npm` defaults to `dryRun: true`; real install/config writes
+  require `dryRun: false` and `confirm: true`.
+- With confirmation, it installs an npm MCP package into the current project
+  and writes a marked project-scoped `.codex/config.toml` block.
 - The generated server command uses `node` plus the installed package
   entrypoint instead of npm command shims.
 - Existing unmanaged `[mcp_servers.<name>]` sections are not overwritten.

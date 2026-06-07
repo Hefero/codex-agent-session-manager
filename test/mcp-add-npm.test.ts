@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,17 +42,46 @@ test('mcp add npm dry-run previews package install and config update without wri
   try {
     const payload = withCwd(workspace, () => buildMcpAddNpmPayload({
       packageSpec: '@modelcontextprotocol/server-everything',
-      dryRun: true,
     }));
 
     assert.equal(payload.ok, true);
     assert.equal(payload.dryRun, true);
+    assert.equal(payload.confirmRequired, true);
     assert.equal(payload.workspace, '<workspace>');
     assert.equal(payload.packageName, '@modelcontextprotocol/server-everything');
     assert.equal(payload.serverName, 'everything');
     assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), false);
     assert.equal(existsSync(join(workspace, 'package.json')), false);
     assert.doesNotMatch(JSON.stringify(payload), new RegExp(escapeRegExp(workspace), 'u'));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('mcp add npm refuses real install without confirm', () => {
+  const workspace = tempWorkspace();
+  try {
+    let npmCalled = false;
+    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+      {
+        packageSpec: '@modelcontextprotocol/server-everything',
+        serverName: 'everything',
+        dryRun: false,
+      },
+      {
+        npmRunner: () => {
+          npmCalled = true;
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      },
+    ));
+
+    assert.equal(payload.ok, false);
+    assert.equal(payload.refused, true);
+    assert.equal(payload.confirmRequired, true);
+    assert.equal(npmCalled, false);
+    assert.equal(existsSync(join(workspace, 'package.json')), false);
+    assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -65,6 +94,8 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
       {
         packageSpec: '@modelcontextprotocol/server-everything',
         serverName: 'everything',
+        dryRun: false,
+        confirm: true,
       },
       {
         npmRunner: fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js'),
@@ -73,6 +104,7 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
 
     assert.equal(payload.ok, true);
     assert.equal(payload.dryRun, false);
+    assert.equal(payload.confirmRequired, false);
     assert.deepEqual(payload.args, [
       'node_modules/@modelcontextprotocol/server-everything/dist/index.js',
       'stdio',
@@ -104,6 +136,8 @@ test('mcp add npm refuses to replace unmanaged server config sections', () => {
         {
           packageSpec: '@modelcontextprotocol/server-everything',
           serverName: 'everything',
+          dryRun: false,
+          confirm: true,
         },
         {
           npmRunner: fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js'),
@@ -113,6 +147,68 @@ test('mcp add npm refuses to replace unmanaged server config sections', () => {
     );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('mcp add npm rejects path-like version specs', () => {
+  const workspace = tempWorkspace();
+  try {
+    assert.throws(
+      () => withCwd(workspace, () => buildMcpAddNpmPayload({
+        packageSpec: 'left-pad@../outside',
+      })),
+      /Only npm registry package specs are supported|Unsupported npm package spec/u,
+    );
+    assert.throws(
+      () => withCwd(workspace, () => buildMcpAddNpmPayload({
+        packageSpec: '@scope/pkg@../outside',
+      })),
+      /Only npm registry package specs are supported|Unsupported npm package spec/u,
+    );
+
+    const payload = withCwd(workspace, () => buildMcpAddNpmPayload({
+      packageSpec: '@scope/pkg@1.2.3-alpha.1',
+      dryRun: true,
+    }));
+    assert.equal(payload.packageName, '@scope/pkg');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('mcp add npm rejects node_modules symlink or junction escapes before install', (t) => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace();
+  try {
+    try {
+      symlinkSync(outside, join(workspace, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('symlink or junction creation is unavailable in this environment');
+      return;
+    }
+
+    let npmCalled = false;
+    assert.throws(
+      () => withCwd(workspace, () => buildMcpAddNpmPayload(
+        {
+          packageSpec: '@modelcontextprotocol/server-everything',
+          serverName: 'everything',
+          dryRun: false,
+          confirm: true,
+        },
+        {
+          npmRunner: () => {
+            npmCalled = true;
+            return { status: 0, stdout: '', stderr: '' };
+          },
+        },
+      )),
+      /symlink or junction/u,
+    );
+    assert.equal(npmCalled, false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 

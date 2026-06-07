@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -137,6 +137,25 @@ test('init accepts package.json with UTF-8 BOM', () => {
     assert.equal(packageJson.scripts?.['codex:remote:dry-run'], `${packageName} remote --dry-run --no-resume`);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('init rejects managed directory symlink or junction escapes', (t) => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace();
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    try {
+      symlinkSync(outside, join(workspace, '.codex'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('symlink or junction creation is unavailable in this environment');
+      return;
+    }
+
+    assert.throws(() => buildInitPlan({ workspace }), /symlink or junction/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 

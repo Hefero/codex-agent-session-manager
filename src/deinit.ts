@@ -2,15 +2,15 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import { PRIMARY_STATE_DIR_NAME } from './app-server/state.js';
 import { redactValue } from './security/redaction.js';
+import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from './security/workspace.js';
 import { packageName } from './version.js';
 
 const MCP_SERVER_NAME = 'codex_agent_session_manager';
@@ -300,7 +300,7 @@ function previewPath(path: string, workspace: string): string {
 }
 
 function addRuntimeAction(plan: DeinitPlan, removeRuntime: boolean): void {
-  const runtimePath = join(plan.workspace, PRIMARY_STATE_DIR_NAME);
+  const runtimePath = workspacePath(plan.workspace, PRIMARY_STATE_DIR_NAME);
   if (!removeRuntime) {
     plan.actions.push({
       kind: 'skip',
@@ -328,7 +328,7 @@ function addRuntimeAction(plan: DeinitPlan, removeRuntime: boolean): void {
 }
 
 export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
-  const workspace = resolve(options.workspace ?? process.cwd());
+  const workspace = resolveWorkspaceRoot(options.workspace ?? process.cwd());
   const dryRun = options.confirm === true ? options.dryRun === true : true;
   const plan: DeinitPlan = {
     ok: true,
@@ -340,7 +340,7 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
     packagesToUninstall: [packageName],
   };
 
-  const codexConfigPath = join(workspace, '.codex', 'config.toml');
+  const codexConfigPath = workspacePath(workspace, '.codex', 'config.toml');
   const codexConfigCurrent = readTextIfExists(codexConfigPath);
   const configRemoval = removeManagedMcpConfig(codexConfigCurrent, options.removeAddedMcps === true);
   for (const packageToUninstall of configRemoval.removedAddedPackages) {
@@ -363,7 +363,7 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
     });
   }
 
-  const gitignorePath = join(workspace, '.gitignore');
+  const gitignorePath = workspacePath(workspace, '.gitignore');
   const gitignoreCurrent = readTextIfExists(gitignorePath);
   maybeAddFileUpdate(
     plan,
@@ -373,7 +373,7 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
     'remove local runtime ignore rule',
   );
 
-  const packageJsonPath = join(workspace, 'package.json');
+  const packageJsonPath = workspacePath(workspace, 'package.json');
   const packageCurrent = readTextIfExists(packageJsonPath);
   maybeAddFileUpdate(
     plan,
@@ -383,7 +383,7 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
     'remove generated npm scripts',
   );
 
-  const agentsPath = join(workspace, 'AGENTS.md');
+  const agentsPath = workspacePath(workspace, 'AGENTS.md');
   const agentsCurrent = readTextIfExists(agentsPath);
   maybeAddFileUpdate(
     plan,
@@ -398,24 +398,11 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
   return plan;
 }
 
-function assertWorkspaceDeletePath(workspace: string, target: string): void {
-  const realWorkspace = realpathSync.native(workspace);
-  const realTarget = realpathSync.native(target);
-  const normalizedWorkspace = realWorkspace.toLowerCase();
-  const normalizedTarget = realTarget.toLowerCase();
-  if (
-    normalizedTarget !== normalizedWorkspace
-    && !normalizedTarget.startsWith(`${normalizedWorkspace}\\`)
-    && !normalizedTarget.startsWith(`${normalizedWorkspace}/`)
-  ) {
-    throw new Error(`Refusing to delete path outside workspace: ${target}`);
-  }
-}
-
 export function applyDeinitPlan(plan: DeinitPlan): void {
   if (plan.dryRun) return;
 
   for (const update of plan.fileUpdates) {
+    assertWorkspacePath(plan.workspace, update.path);
     if (update.content === null) {
       if (existsSync(update.path)) unlinkSync(update.path);
       continue;
@@ -426,7 +413,7 @@ export function applyDeinitPlan(plan: DeinitPlan): void {
 
   for (const target of plan.directoryDeletes) {
     if (!existsSync(target)) continue;
-    assertWorkspaceDeletePath(plan.workspace, target);
+    assertWorkspacePath(plan.workspace, target);
     rmSync(target, { recursive: true, force: true });
   }
 }

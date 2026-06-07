@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -174,6 +174,26 @@ test('init does not mistake managed mcp-add blocks for the base manager block', 
     assert.match(config, /\[mcp_servers\.codex_agent_session_manager\]/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('deinit rejects managed directory symlink or junction escapes', (t) => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace();
+  try {
+    initWorkspace(workspace);
+    rmSync(join(workspace, '.codex'), { recursive: true, force: true });
+    try {
+      symlinkSync(outside, join(workspace, '.codex'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('symlink or junction creation is unavailable in this environment');
+      return;
+    }
+
+    assert.throws(() => buildDeinitPlan({ workspace, confirm: true }), /symlink or junction/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 

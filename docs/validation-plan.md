@@ -51,6 +51,8 @@ The smoke must prove:
 - CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
 - CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
   writing files.
+- Real CLI/MCP `mcp add npm` execution requires `--confirm` or
+  `dryRun:false, confirm:true`.
 - CLI App Server start dry-run emits JSON with `dryRun:true` and the requested
   loopback URL.
 - CLI init dry-run emits human-readable output for a temporary workspace

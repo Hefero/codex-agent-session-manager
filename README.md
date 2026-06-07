@@ -113,7 +113,7 @@ codex-agent-session-manager app-server status --no-probe-ready
 codex-agent-session-manager app-server stop --dry-run
 
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --dry-run
-codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything
+codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything --confirm
 codex-agent-session-manager mcp refresh --thread-id <thread-id>
 
 codex-agent-session-manager session launch --thread-id <thread-id> --dry-run
@@ -121,8 +121,9 @@ codex-agent-session-manager session close --thread-id <thread-id> --dry-run
 codex-agent-session-manager session replace --thread-id <thread-id> --dry-run
 ```
 
-CLI output is JSON by default. Operations that are destructive or launch real
-processes default to dry-run and require `--confirm` for real execution.
+CLI output is JSON by default. Operations that modify files, run package
+installs, are destructive, or launch real processes default to dry-run and
+require `--confirm` for real execution.
 Continuation and replacement prompts are operator text; prefer `--prompt-file`
 when avoiding prompt text in shell history.
 
@@ -130,10 +131,11 @@ when avoiding prompt text in shell history.
 Use `codex-agent-session-manager init --json` when automation needs the
 machine-readable form.
 
-`mcp add npm` installs an npm MCP package locally and writes only the
-project-scoped `.codex/config.toml`. It does not edit the user's global Codex
-config and it does not count as callable proof; run `mcp refresh` and validate
-with a real tool call from the continuation.
+`mcp add npm` defaults to dry-run. With `--confirm`, it installs an npm MCP
+package locally and writes only the project-scoped `.codex/config.toml`. It
+does not edit the user's global Codex config and it does not count as callable
+proof; run `mcp refresh` and validate with a real tool call from the
+continuation.
 
 ## Development
 

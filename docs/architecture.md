@@ -1,7 +1,7 @@
 # Architecture
 
-Status: Phase 4 reload and continuation
-Date: 2026-06-06
+Status: Phase 5 session close, launch, and replace
+Date: 2026-06-07
 
 ## Thesis
 
@@ -102,11 +102,8 @@ The current MCP surface exposes:
 - `codex_session_continue`
 - `codex_session_close`
 - `codex_session_launch`
-- `codex-session-manager://operations`
-
-Planned next tools:
-
 - `codex_session_replace`
+- `codex-session-manager://operations`
 
 ## Callable Refresh Evidence
 
@@ -169,6 +166,19 @@ Phase 5 launch is intentionally scoped:
   omits initial prompt text from previews and operation evidence.
 - Its first callable proof ran in `dryRun` mode and confirmed
   `startsAppServer: false` with prompt text replaced by `<prompt>`.
+
+Phase 5 replacement composes cleanup and launch:
+
+- `codex_session_replace` targets matching remote TUI roots for the current
+  workspace, selected loopback App Server URL, and explicit `threadId`, then
+  relaunches that same thread against the same App Server.
+- It defaults to `dryRun: true`; real replacement requires `dryRun: false` and
+  `confirm: true`.
+- Replacement prompt text is passed through environment in the detached child
+  and appears only as `<prompt>` in previews/evidence.
+- Its first callable proof ran in `dryRun` mode and returned `ok: true`,
+  `confirmRequired: true`, `startsAppServer: false`, and close target counts
+  without stopping or launching any process.
 
 ## Boundaries
 

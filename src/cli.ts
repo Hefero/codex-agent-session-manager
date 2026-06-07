@@ -4,6 +4,7 @@ import { runMcpReloadOperationFromArgv } from './tools/reload.js';
 import { runSessionCloseOperationFromArgv } from './tools/session-close.js';
 import { runSessionContinueOperationFromArgv } from './tools/session-continue.js';
 import { runSessionLaunchOperationFromArgv } from './tools/session-launch.js';
+import { runSessionReplaceOperationFromArgv } from './tools/session-replace.js';
 import { packageName, packageVersion } from './version.js';
 
 function printHelp(): void {
@@ -54,6 +55,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'run-session-launch-operation') {
     await runSessionLaunchOperationFromArgv(argv.slice(1));
+    return;
+  }
+
+  if (command === 'run-session-replace-operation') {
+    await runSessionReplaceOperationFromArgv(argv.slice(1));
     return;
   }
 

@@ -36,6 +36,7 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_session_continue`
   - `codex_session_close`
   - `codex_session_launch`
+  - `codex_session_replace`
 - Durable operation resource: `codex-session-manager://operations`.
 - Raw JSON-RPC smoke test for MCP initialization, tool listing, tool call, and
   resource listing.

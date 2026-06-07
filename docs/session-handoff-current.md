@@ -1,6 +1,6 @@
 # Current Session Handoff
 
-Date: 2026-06-06
+Date: 2026-06-07
 
 ## Goal
 
@@ -15,10 +15,9 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 
 ## Current State
 
-Phases 1, 2, and 3 are implemented and validated. Phase 4 now has durable
-operation state, `codex_mcp_reload`, and `codex_session_continue` with
-fresh-turn callable proof. Phase 5 has started with local `codex_session_close`
-and `codex_session_launch` implementation; check `git log` and `git status`
+Phases 1, 2, 3, and 4 are implemented and validated. Phase 5 now has
+`codex_session_close`, `codex_session_launch`, and `codex_session_replace`
+implemented with fresh-turn callable proof. Check `git log` and `git status`
 for the latest commit state.
 
 Implemented:
@@ -36,6 +35,7 @@ Implemented:
 - Continuation tool `codex_session_continue`.
 - Remote TUI cleanup tool `codex_session_close`.
 - Remote TUI launch tool `codex_session_launch`.
+- Remote TUI replacement tool `codex_session_replace`.
 - Resource `codex-session-manager://operations`.
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
@@ -96,6 +96,8 @@ git diff --check
 - Keep session launch scoped to an already-known App Server URL until lifecycle
   probes are promoted. `codex_session_launch` does not start App Server in its
   first cut.
+- Keep session replacement as an explicit-thread composition of close plus
+  launch. `codex_session_replace` does not start App Server in its first cut.
 
 ## Latest Phase 3 Evidence
 
@@ -233,12 +235,28 @@ startsAppServer: false
 prompt text omitted from preview/evidence: true
 ```
 
+## Latest Phase 5 Replace Evidence
+
+`codex_session_replace` was validated locally and by fresh-turn callable
+dry-run proof:
+
+```text
+callable: true
+ok: true
+dryRun: true
+confirmRequired: true
+close.targetCount: 0
+close.remoteProcessCount: 0
+startsAppServer: false
+prompt text omitted from preview/evidence: true
+```
+
 ## Bootstrap Rule
 
-Until the next session-management tools exist, this session is still a dogfood
-worker, not the primary controller. A separate controller session may
-inject narrow checkpoints, schedule reloads/continuations, and authorize
-commits/pushes.
+Until Phase 6 lifecycle and Windows launcher probes are promoted, this session
+is still a dogfood worker, not the primary controller. A separate controller
+session may inject narrow checkpoints, schedule reloads/continuations, and
+authorize commits/pushes.
 
 Do not try to fully self-manage yet. Use the repo-local MCP tools when they are
 available, and report whether they are callable.
@@ -246,7 +264,8 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. Continue Phase 5 with `codex_session_replace`.
+2. Continue Phase 6 probes, starting with Windows hidden stdio launcher and
+   lifecycle state.
 3. Keep all future session-manager tools small, typed, and explicitly guarded.
 
 ## Do Not Do

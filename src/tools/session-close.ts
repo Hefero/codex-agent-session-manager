@@ -334,7 +334,7 @@ export function buildSessionClosePayload(
   }
 }
 
-function stopRemoteRoots(processes: readonly ProcessEntry[], roots: readonly ProcessEntry[], stopProcess: ProcessStopper): Array<Record<string, unknown>> {
+export function stopRemoteRoots(processes: readonly ProcessEntry[], roots: readonly ProcessEntry[], stopProcess: ProcessStopper): Array<Record<string, unknown>> {
   return roots.map((root) => {
     const tree = collectProcessTree(processes, [root.pid]);
     const result = stopProcess(root.pid, tree);
@@ -348,7 +348,7 @@ function stopRemoteRoots(processes: readonly ProcessEntry[], roots: readonly Pro
   });
 }
 
-async function waitForRemoteGone(input: {
+export async function waitForRemoteGone(input: {
   appServerUrl: string;
   threadId: string;
   workspace: string;

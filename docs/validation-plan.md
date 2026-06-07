@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: Phase 5 close started
+Status: Phase 5 session close, launch, and replace implemented
 
 ## Scaffold Checks
 
@@ -25,6 +25,7 @@ The smoke must prove:
   - `codex_session_continue`
   - `codex_session_close`
   - `codex_session_launch`
+  - `codex_session_replace`
 - `tools/call` can call `codex_session_manager_probe`.
 - `resources/list` includes `codex-session-manager://operations`.
 
@@ -59,6 +60,11 @@ Current read-only checks:
 - refuse real remote TUI launch unless `dryRun:false` and `confirm:true`;
 - keep App Server lifecycle start separate from `codex_session_launch` until
   lifecycle probes are promoted.
+- preview explicit-thread remote TUI replacement without prompt text in
+  `dryRun` mode;
+- refuse real remote TUI replacement unless `dryRun:false` and `confirm:true`;
+- compose replacement from explicit-thread close plus same-thread launch while
+  keeping App Server lifecycle start separate.
 
 ## Callable Catalog Proof Matrix
 

@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 5 close and launch implemented
+Status: Phase 5 session close, launch, and replace implemented
 
 ## Bootstrap Workflow
 
@@ -206,7 +206,7 @@ Exit criteria:
 - Replacement fallback can validate a callable MCP change when continuation is
   stale.
 
-Status: close and launch implemented/callable; replace not started.
+Status: close, launch, and replace implemented/callable.
 
 Implemented:
 
@@ -226,6 +226,13 @@ Implemented:
   picker mode. Supplying `threadId` implies session mode.
 - Launch does not start App Server in this cut; that is deferred to lifecycle
   probes/porting.
+- `codex_session_replace` composes explicit-thread remote TUI cleanup with a
+  same-thread remote launch against the selected App Server URL.
+- Replace defaults to `dryRun: true`; real replacement requires
+  `dryRun: false` and `confirm: true`.
+- Replace prompt text is carried by child environment, never argv, and is
+  redacted from previews, operation evidence, and failure evidence.
+- Replace does not start App Server in this cut.
 
 Validation:
 
@@ -245,10 +252,18 @@ Validation:
   returned `ok: true`, `confirmRequired: true`, `mode: session`,
   `startsAppServer: false`, and a `<prompt>` placeholder instead of prompt
   text.
+- Unit tests cover replace dry-run preview, confirm refusal, durable
+  scheduling, close+launch child runner completion through fake process and
+  launch executors, and argv without prompt text or broad cleanup flags.
+- App Server status listed `codex_session_replace`.
+- A fresh proof turn called `codex_session_replace` in `dryRun` mode; it
+  returned `ok: true`, `confirmRequired: true`, `close.targetCount: 0`,
+  `close.remoteProcessCount: 0`, `startsAppServer: false`, and a `<prompt>`
+  placeholder instead of prompt text.
 
 Remaining in Phase 5:
 
-- `codex_session_replace`;
+- none for the current safe-first session tool surface.
 
 ## Phase 6: Port From Experimental Repo
 

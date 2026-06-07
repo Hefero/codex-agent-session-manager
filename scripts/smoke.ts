@@ -81,6 +81,7 @@ try {
     'codex_session_continue',
     'codex_session_close',
     'codex_session_launch',
+    'codex_session_replace',
   ];
   const missingTools = requiredTools.filter((name) => !toolNames.includes(name));
   if (missingTools.length > 0) {

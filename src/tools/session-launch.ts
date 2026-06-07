@@ -166,7 +166,7 @@ function validateLaunchMode(input: { mode: LaunchMode; threadId?: string | undef
   }
 }
 
-function buildCodexArgs(input: {
+export function buildCodexArgs(input: {
   appServerUrl: string;
   workspace: string;
   mode: LaunchMode;
@@ -225,7 +225,7 @@ function requestedEvidence(input: {
   };
 }
 
-function launchPlanPreview(plan: LaunchPlan): Record<string, unknown> {
+export function launchPlanPreview(plan: LaunchPlan): Record<string, unknown> {
   const args = plan.args.map((arg) => (plan.promptIncluded && arg === plan.args.at(-1) ? '<prompt>' : arg));
   return {
     command: redactSensitiveText(plan.codexCommand),

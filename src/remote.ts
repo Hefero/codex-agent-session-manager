@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { connectAppServerClient } from './app-server/client.js';
 import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState } from './app-server/state.js';
@@ -12,6 +14,10 @@ import { buildCodexArgs, resolveCodexCommand } from './tools/session-launch.js';
 const DEFAULT_HOST = '127.0.0.1';
 const READY_TIMEOUT_MS = 20_000;
 const READY_POLL_MS = 250;
+const WORKSPACE_STATE_DIR = '.codex-agent-session-manager';
+const WINDOWS_HIDDEN_LAUNCHER_SOURCE = join(resolve(dirname(fileURLToPath(import.meta.url)), '..'), 'scripts', 'windows-hidden-stdio-launcher.cs');
+const WINDOWS_HIDDEN_LAUNCHER_EXE = 'windows-hidden-stdio-launcher.exe';
+const WINDOWS_HIDDEN_LAUNCHER_STAMP = 'windows-hidden-stdio-launcher.exe.sha256';
 
 type RemoteMode = 'fresh' | 'session' | 'last' | 'pick';
 
@@ -249,11 +255,90 @@ async function resolveTargetUrl(
 function logPaths(workspace: string, appServerUrl: string): { stdoutLog: string; stderrLog: string } {
   const url = new URL(appServerUrl);
   const suffix = `${url.hostname.replace(/[^a-zA-Z0-9_.-]+/gu, '-')}-${url.port}`;
-  const logDir = join(workspace, '.codex-agent-session-manager', 'logs');
+  const logDir = join(workspace, WORKSPACE_STATE_DIR, 'logs');
   return {
     stdoutLog: join(logDir, `codex-app-server-${suffix}.out.log`),
     stderrLog: join(logDir, `codex-app-server-${suffix}.err.log`),
   };
+}
+
+function readText(path: string): string {
+  return existsSync(path) ? readFileSync(path, 'utf8') : '';
+}
+
+function sha256(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+function findWindowsCsc(): string | null {
+  const windir = process.env.WINDIR ?? process.env.SystemRoot ?? 'C:\\Windows';
+  const candidates = [
+    join(windir, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+    join(windir, 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  const result = spawnSync('where.exe', ['csc'], { encoding: 'utf8', windowsHide: true });
+  if (result.status !== 0) return null;
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && existsSync(line))
+    ?? null;
+}
+
+function compileWindowsHiddenLauncher(outputPath: string, sourceHash: string, stampPath: string): boolean {
+  const compiler = findWindowsCsc();
+  if (compiler === null) return existsSync(outputPath);
+
+  mkdirSync(dirname(outputPath), { recursive: true });
+  const tempOutputPath = join(dirname(outputPath), `.windows-hidden-stdio-launcher-${process.pid}-${Date.now()}.tmp.exe`);
+  const result = spawnSync(
+    compiler,
+    ['/nologo', '/target:winexe', `/out:${tempOutputPath}`, WINDOWS_HIDDEN_LAUNCHER_SOURCE],
+    { encoding: 'utf8', windowsHide: true },
+  );
+
+  if (result.status !== 0) {
+    rmSync(tempOutputPath, { force: true });
+    throw new Error(
+      `Failed to build Windows hidden App Server launcher with ${compiler}.\n${result.stdout ?? ''}${result.stderr ?? ''}`,
+    );
+  }
+
+  try {
+    copyFileSync(tempOutputPath, outputPath);
+    writeFileSync(stampPath, `${sourceHash}\n`, 'utf8');
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+    if (!existsSync(outputPath) || !['EBUSY', 'EPERM', 'EACCES'].includes(code)) throw error;
+  } finally {
+    rmSync(tempOutputPath, { force: true });
+  }
+  return existsSync(outputPath);
+}
+
+function resolveWindowsHiddenLauncher(workspace: string, dryRun: boolean): string | null {
+  if (process.platform !== 'win32') return null;
+  if (!existsSync(WINDOWS_HIDDEN_LAUNCHER_SOURCE)) return null;
+
+  const target = join(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_EXE);
+  const stampPath = join(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_STAMP);
+  if (dryRun) return target;
+
+  const sourceContent = readText(WINDOWS_HIDDEN_LAUNCHER_SOURCE);
+  if (sourceContent.length === 0) return null;
+  const sourceHash = sha256(sourceContent);
+  const shouldCompile = !existsSync(target) || readText(stampPath).trim() !== sourceHash;
+  if (!shouldCompile) return target;
+
+  return compileWindowsHiddenLauncher(target, sourceHash, stampPath) ? target : null;
+}
+
+function canLaunchThroughWindowsHiddenLauncher(command: string): boolean {
+  return process.platform === 'win32' && /\.exe$/iu.test(command) && existsSync(command);
 }
 
 export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps = {}): Promise<RemotePlan> {
@@ -267,6 +352,11 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
   if (options.enableImageGeneration !== true) {
     serverArgs.push('--disable', 'image_generation');
   }
+  const hiddenLauncher = canLaunchThroughWindowsHiddenLauncher(codexCommand)
+    ? resolveWindowsHiddenLauncher(workspace, options.dryRun === true)
+    : null;
+  const serverCommand = hiddenLauncher ?? codexCommand;
+  const serverArgsWithLauncher = hiddenLauncher ? [codexCommand, ...serverArgs] : serverArgs;
   const tuiArgs = buildCodexArgs({
     appServerUrl: target.url,
     workspace,
@@ -285,8 +375,8 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
     startsAppServer: target.startsAppServer,
     noResume: options.noResume === true,
     server: {
-      command: codexCommand,
-      args: serverArgs,
+      command: serverCommand,
+      args: serverArgsWithLauncher,
       ...logs,
     },
     tui: {
@@ -297,7 +387,7 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
   };
 }
 
-function publicPlan(plan: RemotePlan): Record<string, unknown> {
+export function remotePlanPreview(plan: RemotePlan): Record<string, unknown> {
   return redactValue(
     {
       workspace: '<workspace>',
@@ -454,7 +544,7 @@ export async function runRemoteCommand(argv: readonly string[], deps: RemoteDeps
   }
   const plan = await buildRemotePlan(options, deps);
   if (options.dryRun === true) {
-    output(JSON.stringify({ ok: true, dryRun: true, plan: publicPlan(plan) }, null, 2));
+    output(JSON.stringify({ ok: true, dryRun: true, plan: remotePlanPreview(plan) }, null, 2));
     return 0;
   }
   return executeRemotePlan(plan, deps);

@@ -7,7 +7,14 @@ import {
   mcpStatusListInputSchema,
   threadsListInputSchema,
 } from './tools/app-server.js';
+import {
+  appServerStatusInputSchema,
+  appServerStopInputSchema,
+  buildAppServerStatusPayload,
+  buildAppServerStopPayload,
+} from './tools/app-server-lifecycle.js';
 import { appServerStateReadInputSchema, buildAppServerStateReadPayload } from './tools/app-server-state.js';
+import { appServerStartInputSchema, buildAppServerStartPayload } from './tools/app-server-start.js';
 import {
   buildOperationReadPayload,
   buildOperationWaitPayload,
@@ -16,6 +23,7 @@ import {
   operationWaitInputSchema,
 } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
+import { buildMcpRefreshPayload, mcpRefreshInputSchema } from './tools/mcp-refresh.js';
 import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
 import { buildSessionClosePayload, sessionCloseInputSchema } from './tools/session-close.js';
 import { buildSessionContinuePayload, sessionContinueInputSchema } from './tools/session-continue.js';
@@ -215,6 +223,94 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = buildMcpReloadPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_mcp_refresh',
+    {
+      title: 'Reload MCP And Continue',
+      description: 'Schedule MCP reload, collect before/after status evidence, then start a continuation turn after the target thread is idle.',
+      inputSchema: mcpRefreshInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = buildMcpRefreshPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_app_server_start',
+    {
+      title: 'Start Codex App Server',
+      description: 'Start or reuse a workspace-managed loopback Codex App Server in the background without launching a TUI.',
+      inputSchema: appServerStartInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = await buildAppServerStartPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_app_server_status',
+    {
+      title: 'Inspect Managed App Server',
+      description: 'Inspect workspace-managed App Server launcher state, process liveness, and optional /readyz status.',
+      inputSchema: appServerStatusInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = await buildAppServerStatusPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_app_server_stop',
+    {
+      title: 'Stop Managed App Server',
+      description: 'Safely schedule shutdown of the workspace-owned App Server process tree without touching user global MCP config.',
+      inputSchema: appServerStopInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = buildAppServerStopPayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

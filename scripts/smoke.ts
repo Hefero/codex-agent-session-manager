@@ -79,6 +79,10 @@ try {
     'codex_operation_read',
     'codex_operation_wait',
     'codex_mcp_reload',
+    'codex_mcp_refresh',
+    'codex_app_server_start',
+    'codex_app_server_status',
+    'codex_app_server_stop',
     'codex_session_continue',
     'codex_session_close',
     'codex_session_launch',
@@ -105,8 +109,53 @@ try {
     throw new Error(`Unexpected probe result: ${text}`);
   }
 
-  send({ jsonrpc: '2.0', id: 4, method: 'resources/list', params: {} });
-  const resources = await waitForResponse(4);
+  send({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'tools/call',
+    params: {
+      name: 'codex_app_server_start',
+      arguments: { dryRun: true, port: '4566' },
+    },
+  });
+  const startCall = await waitForResponse(4);
+  const startText = ((startCall.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text ?? '';
+  if (!startText.includes('"dryRun": true') || !startText.includes('ws://127.0.0.1:4566')) {
+    throw new Error(`Unexpected app server start dry-run result: ${startText}`);
+  }
+
+  send({
+    jsonrpc: '2.0',
+    id: 5,
+    method: 'tools/call',
+    params: {
+      name: 'codex_app_server_status',
+      arguments: { probeReady: false, includeProcessTree: false },
+    },
+  });
+  const statusCall = await waitForResponse(5);
+  const statusText = ((statusCall.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text ?? '';
+  if (!statusText.includes('"ok": true') || !statusText.includes('managedAppServer')) {
+    throw new Error(`Unexpected app server status result: ${statusText}`);
+  }
+
+  send({
+    jsonrpc: '2.0',
+    id: 6,
+    method: 'tools/call',
+    params: {
+      name: 'codex_app_server_stop',
+      arguments: { dryRun: true },
+    },
+  });
+  const stopCall = await waitForResponse(6);
+  const stopText = ((stopCall.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text ?? '';
+  if (!stopText.includes('"dryRun": true') || !stopText.includes('managedAppServer')) {
+    throw new Error(`Unexpected app server stop dry-run result: ${stopText}`);
+  }
+
+  send({ jsonrpc: '2.0', id: 7, method: 'resources/list', params: {} });
+  const resources = await waitForResponse(7);
   const resourceUris =
     (resources.result as { resources?: Array<{ uri?: string }> }).resources?.map((resource) => resource.uri) ?? [];
   if (!resourceUris.includes('codex-session-manager://operations')) {

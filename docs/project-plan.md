@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 5 session close, launch, and replace implemented
+Status: Phase 7 lifecycle and MCP refresh workflow implemented
 
 ## Bootstrap Workflow
 
@@ -189,9 +189,27 @@ Validation:
 - The child continuation turn replied with the requested proof marker, and the
   operation JSON did not contain the prompt text.
 
-Remaining in Phase 4:
+Phase 4 composition:
 
-- compose reload plus continuation into one higher-level workflow when useful.
+- `codex_mcp_refresh` composes MCP reload plus continuation in one durable
+  operation.
+- The child records before/after MCP status evidence for the target thread,
+  requests reload, waits for the target thread idle/stable boundary, and starts
+  the continuation turn.
+- Refresh prompt text is passed through environment and is excluded from argv,
+  structured output, operation evidence, and failure evidence.
+- Final proof still requires the started continuation turn to call the changed
+  model-callable tool.
+
+Validation:
+
+- Unit tests cover durable scheduling, prompt redaction, operation argv without
+  prompt text, status-before/reload/status-after ordering, idle wait, and
+  `turn/start` through a fake client.
+- Fresh-turn callable proof called `codex_mcp_refresh`; the resulting
+  `mcp_refresh` operation completed with `statusBefore`, `statusAfter`,
+  `ready`, and `turnStart` evidence. The continuation turn then called
+  `codex_session_manager_probe` and replied `MCP_REFRESH_CHILD_PROOF_DONE`.
 
 ## Phase 5: Session Launch, Close, Replace
 
@@ -224,15 +242,16 @@ Implemented:
   `confirm: true`.
 - Launch can start fresh, resume a specific `threadId`, resume last, or open
   picker mode. Supplying `threadId` implies session mode.
-- Launch does not start App Server in this cut; that is deferred to lifecycle
-  probes/porting.
+- Launch does not start App Server; lifecycle start/status/stop belongs to the
+  dedicated App Server lifecycle tools.
 - `codex_session_replace` composes explicit-thread remote TUI cleanup with a
   same-thread remote launch against the selected App Server URL.
 - Replace defaults to `dryRun: true`; real replacement requires
   `dryRun: false` and `confirm: true`.
 - Replace prompt text is carried by child environment, never argv, and is
   redacted from previews, operation evidence, and failure evidence.
-- Replace does not start App Server in this cut.
+- Replace does not start App Server; it only composes explicit-thread close
+  plus same-thread launch against an existing App Server URL.
 
 Validation:
 
@@ -278,9 +297,9 @@ Port only the parts that survive the new architecture:
 
 Do not copy the old code shape blindly.
 
-Status: cwd guardrails, read-only App Server state, security scan patterns, and
-first-cut repo-local `remote` promoted; Windows hidden launcher behavior still
-probe-gated.
+Status: cwd guardrails, read-only App Server state, security scan patterns,
+repo-local `remote`, Windows hidden App Server launch, and visual popup
+behavior probes promoted.
 
 Implemented:
 
@@ -307,6 +326,11 @@ Implemented:
 - The first-cut remote launcher intentionally does not read legacy
   `.codex-mcp-hot-reloader` state, so Windows popup probes can compare the new
   flow against the old launcher.
+- On Windows, `remote` wraps the managed background App Server with a generated
+  `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe` when Codex
+  resolves to native `codex.exe`.
+- The visible Codex TUI remains direct; the launcher does not edit the user's
+  global MCP config.
 
 Validation:
 
@@ -327,8 +351,71 @@ Validation:
 - Unit tests cover remote arg parsing, ignoring legacy state, preferring primary
   state, redacted dry-run output, and fake `--no-resume` App Server start state.
 - `npm run remote -- --dry-run --no-resume`
+- Unit tests cover the Windows hidden App Server wrapper plan while keeping the
+  TUI command direct.
+- `npm run remote -- --no-resume --port 4571` started
+  `windows-hidden-stdio-launcher.exe` as the managed App Server root and
+  `codex.exe app-server --listen ws://127.0.0.1:4571` as its child; the test
+  process and state were cleaned up afterwards.
 
-Still gated by Decision 3 probes:
+Status after operator probe:
 
-- Windows hidden stdio launcher logic.
-- Visual Windows popup behavior for real `npm run remote` / `/mcp` flows.
+- The operator restored global Slack/node_repl MCP config to direct stdio,
+  restarted the session, ran `/mcp`, and observed no popups.
+- The operator then ran `npm run remote` in this repo and `/mcp` in the opened
+  session and again observed no popups.
+- Decision: keep hidden launcher only for the managed App Server initial
+  process. Do not rewrite or virtualize the user's global MCP config by
+  default.
+
+## Phase 7: App Server Lifecycle Tooling
+
+- Let the agent start or reuse a workspace-managed App Server without launching
+  a TUI.
+- Keep App Server lifecycle separate from visible remote TUI launch.
+- Reuse the CLI `remote --no-resume` plan, including Windows hidden App Server
+  launcher behavior.
+
+Status: lifecycle start/status/stop first cut implemented.
+
+Implemented:
+
+- `codex_app_server_start` exposes managed App Server start/reuse as an MCP
+  tool.
+- The tool defaults to `dryRun: true`; real execution requires
+  `dryRun: false` and `confirm: true`.
+- Real execution creates an `app_server_start` operation and schedules a
+  detached child.
+- The child runs the same no-resume remote plan used by the CLI, records output
+  and exit code, and leaves TUI launch to `codex_session_launch`.
+- `codex_app_server_status` reports primary workspace-managed launcher state,
+  process liveness, optional `/readyz` status, and redacted process-tree
+  evidence.
+- `codex_app_server_stop` targets only the primary workspace-owned App Server
+  process tree. It defaults to `dryRun: true`; real execution requires
+  `dryRun: false` and `confirm: true`.
+- Real stop creates an `app_server_stop` operation, schedules a detached child,
+  stops the matched process tree, waits for it to exit, and marks primary state
+  as `stopped`/`owned:false`.
+- Stop does not close remote TUI windows and does not rewrite user global MCP
+  configuration.
+
+Validation:
+
+- Unit tests cover dry-run planning, confirm refusal, durable scheduling,
+  child execution through a fake executor, and argv parsing.
+- Unit tests cover status `/readyz` probing, stop dry-run, confirm refusal,
+  durable stop scheduling, process-tree stop evidence, stopped state write, and
+  argv parsing.
+- `npm run smoke` confirms the lifecycle tools are listed by MCP `tools/list`
+  and calls start/status/stop in non-destructive modes.
+- Fresh-turn callable proof called `codex_app_server_start` with
+  `dryRun:true`, `port:"4566"` and returned
+  `APP_SERVER_START_CALLABLE_PROOF_DONE`.
+- Fresh-turn callable proof after App Server MCP reload called
+  `codex_app_server_status` and `codex_app_server_stop` with `dryRun:true`,
+  then returned `APP_SERVER_LIFECYCLE_CALLABLE_PROOF_DONE`.
+- Disposable real-stop probe started a temporary workspace App Server with
+  `remote --no-resume --port auto`, ran the App Server stop operation against
+  that workspace, and observed operation `completed`, state `stopped`,
+  `owned:false`, and no remaining process for the managed App Server root.

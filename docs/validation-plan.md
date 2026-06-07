@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: Phase 5 session close, launch, and replace implemented
+Status: Phase 7 lifecycle and MCP refresh workflow implemented
 
 ## Scaffold Checks
 
@@ -27,6 +27,10 @@ The smoke must prove:
   - `codex_operation_read`
   - `codex_operation_wait`
   - `codex_mcp_reload`
+  - `codex_mcp_refresh`
+  - `codex_app_server_start`
+  - `codex_app_server_status`
+  - `codex_app_server_stop`
   - `codex_session_continue`
   - `codex_session_close`
   - `codex_session_launch`
@@ -34,9 +38,9 @@ The smoke must prove:
 - `tools/call` can call `codex_session_manager_probe`.
 - `resources/list` includes `codex-session-manager://operations`.
 
-## App Server Checks
+## App Server And Session Checks
 
-Current read-only checks:
+Current checks:
 
 - reject non-loopback App Server URLs;
 - reject URL credentials, path, query, and fragment;
@@ -56,6 +60,9 @@ Current read-only checks:
 - observe operation completion written by another store/process instance.
 - schedule MCP reload through durable operation state and detached child process;
 - record diagnostic MCP status before/after reload when a thread id is supplied.
+- compose MCP reload plus continuation through `codex_mcp_refresh`, preserving
+  before/after MCP status, idle/stable wait evidence, and `turn/start`
+  evidence in one operation.
 - schedule a continuation through durable operation state and a detached child
   process;
 - pass continuation prompt text outside argv, structured output, operation
@@ -69,8 +76,8 @@ Current read-only checks:
 - exclude App Server processes from remote TUI cleanup targets.
 - preview Codex remote TUI launch without prompt text in `dryRun` mode;
 - refuse real remote TUI launch unless `dryRun:false` and `confirm:true`;
-- keep App Server lifecycle start separate from `codex_session_launch` until
-  lifecycle probes are promoted.
+- keep App Server lifecycle start/status/stop separate from
+  `codex_session_launch`.
 - preview explicit-thread remote TUI replacement without prompt text in
   `dryRun` mode;
 - refuse real remote TUI replacement unless `dryRun:false` and `confirm:true`;
@@ -83,6 +90,16 @@ Current read-only checks:
 - run production dependency audit.
 - dry-run the repo-local remote launcher and confirm it uses primary
   `.codex-agent-session-manager` state, not legacy hot-reloader state.
+- dry-run `codex_app_server_start`, confirm real execution requires
+  `confirm:true`, and verify the real operation runs the no-resume App Server
+  plan without launching a TUI.
+- call `codex_app_server_status` without destructive side effects and verify it
+  reports only primary workspace-managed App Server state/process evidence.
+- dry-run `codex_app_server_stop`, confirm real execution requires
+  `dryRun:false` and `confirm:true`, and verify the real operation only targets
+  the owned workspace App Server process tree.
+- verify App Server stop marks primary launcher state as `stopped`/`owned:false`
+  and does not close remote TUI windows or alter user global MCP config.
 
 ## Windows Popup Probe
 

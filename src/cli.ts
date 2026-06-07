@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { startStdioServer } from './mcp-server.js';
 import { remoteUsage, runRemoteCommand } from './remote.js';
+import { runAppServerStopOperationFromArgv } from './tools/app-server-lifecycle.js';
+import { runAppServerStartOperationFromArgv } from './tools/app-server-start.js';
+import { runMcpRefreshOperationFromArgv } from './tools/mcp-refresh.js';
 import { runMcpReloadOperationFromArgv } from './tools/reload.js';
 import { runSessionCloseOperationFromArgv } from './tools/session-close.js';
 import { runSessionContinueOperationFromArgv } from './tools/session-continue.js';
@@ -53,6 +56,21 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'run-mcp-reload-operation') {
     await runMcpReloadOperationFromArgv(argv.slice(1));
+    return;
+  }
+
+  if (command === 'run-mcp-refresh-operation') {
+    await runMcpRefreshOperationFromArgv(argv.slice(1));
+    return;
+  }
+
+  if (command === 'run-app-server-start-operation') {
+    await runAppServerStartOperationFromArgv(argv.slice(1));
+    return;
+  }
+
+  if (command === 'run-app-server-stop-operation') {
+    await runAppServerStopOperationFromArgv(argv.slice(1));
     return;
   }
 

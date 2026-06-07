@@ -33,6 +33,7 @@ Implemented:
 - Read-only thread recommendation tool `codex_thread_context`.
 - Operation tools `codex_operation_read` and `codex_operation_wait`.
 - Reload tool `codex_mcp_reload`.
+- Refresh workflow tool `codex_mcp_refresh`.
 - Continuation tool `codex_session_continue`.
 - Remote TUI cleanup tool `codex_session_close`.
 - Remote TUI launch tool `codex_session_launch`.
@@ -102,17 +103,19 @@ git diff --check
 - Keep session cleanup safe-first: `codex_session_close` only targets explicit
   `threadId`, current workspace, and selected App Server URL; it defaults to
   `dryRun:true` and requires `confirm:true` for real cleanup.
-- Keep session launch scoped to an already-known App Server URL until lifecycle
-  probes are promoted. `codex_session_launch` does not start App Server in its
-  first cut.
+- Keep session launch scoped to an already-known App Server URL.
+  `codex_session_launch` does not start App Server; lifecycle start/status/stop
+  stay in `codex_app_server_start`, `codex_app_server_status`, and
+  `codex_app_server_stop`.
 - Keep session replacement as an explicit-thread composition of close plus
   launch. `codex_session_replace` does not start App Server in its first cut.
 - Keep tool-provided `cwd` values scoped to the current workspace. Lexical
   escapes, symlink escapes, and junction escapes must be rejected before thread
   discovery queries App Server.
-- Keep App Server lifecycle state visibility read-only until start/stop probes
-  are promoted. `codex_app_server_state_read` reports resolution source and
-  redacted state; it does not prove process liveness.
+- Keep App Server lifecycle tools scoped to primary workspace-managed state.
+  `codex_app_server_state_read` reports resolution source and redacted state,
+  `codex_app_server_status` reports liveness, and `codex_app_server_stop`
+  requires `dryRun:false` plus `confirm:true`.
 
 ## Latest Phase 3 Evidence
 
@@ -316,7 +319,7 @@ tests: parse args, ignore legacy state, prefer primary state, redacted dry-run,
 fake no-resume state write
 ```
 
-Real popup behavior still needs an operator-visible Windows probe:
+Operator-visible Windows popup behavior was promoted:
 
 ```powershell
 cd <workspace>
@@ -324,12 +327,32 @@ npm run remote
 # then run /mcp inside the opened Codex session
 ```
 
+Result: after restoring global MCP config to direct stdio, `npm run remote` and
+`/mcp` produced no popups. Keep the hidden launcher only for the managed App
+Server initial process.
+
+## Latest Phase 7 Lifecycle Evidence
+
+Lifecycle tools are promoted:
+
+```text
+codex_app_server_start: callable proof pass
+codex_app_server_status: callable proof pass
+codex_app_server_stop dry-run: callable proof pass
+```
+
+`codex_mcp_refresh` is also promoted as the default reload-plus-continuation
+workflow. Fresh-turn proof called `codex_mcp_refresh`; the resulting operation
+completed with `statusBefore`, `statusAfter`, `ready`, and `turnStart`
+evidence. The continuation turn called `codex_session_manager_probe` and
+replied `MCP_REFRESH_CHILD_PROOF_DONE`.
+
 ## Bootstrap Rule
 
-Until Phase 6 lifecycle and Windows launcher probes are promoted, this session
-is still a dogfood worker, not the primary controller. A separate controller
-session may inject narrow checkpoints, schedule reloads/continuations, and
-authorize commits/pushes.
+Lifecycle, Windows launcher, and refresh workflow probes are now promoted, but
+this session is still a dogfood worker while commits/release boundaries are
+controlled externally. A separate controller session may inject narrow
+checkpoints, schedule reloads/continuations, and authorize commits/pushes.
 
 Do not try to fully self-manage yet. Use the repo-local MCP tools when they are
 available, and report whether they are callable.
@@ -337,10 +360,10 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. Continue Phase 6 probes. Windows hidden stdio launcher remains explicitly
-   probe-gated by the operator decision.
-3. Use real `npm run remote` plus `/mcp` only when the operator can observe
-   whether cmd/conhost popups appear.
+2. Review and commit the promoted lifecycle/refresh changes when the controller
+   approves.
+3. Decide the next phase: public CLI lifecycle commands, project init/bootstrap,
+   or package/release hardening.
 4. Keep all future session-manager tools small, typed, and explicitly guarded.
 
 ## Do Not Do

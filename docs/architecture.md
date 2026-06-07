@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 5 session close, launch, and replace
+Status: Phase 7 lifecycle and MCP refresh workflow
 Date: 2026-06-07
 
 ## Thesis
@@ -103,6 +103,10 @@ The current MCP surface exposes:
 - `codex_operation_read`
 - `codex_operation_wait`
 - `codex_mcp_reload`
+- `codex_mcp_refresh`
+- `codex_app_server_start`
+- `codex_app_server_status`
+- `codex_app_server_stop`
 - `codex_session_continue`
 - `codex_session_close`
 - `codex_session_launch`
@@ -150,6 +154,17 @@ Phase 4 continuation adds the second mutating operation:
   turn, observed a completed durable operation with `ready` and `turnStart`
   evidence, and observed the child turn respond with the requested marker.
 
+Phase 4 composition adds the default refresh workflow:
+
+- `codex_mcp_refresh` creates one durable `mcp_refresh` operation that reloads
+  MCP servers, records before/after MCP status for the target thread, waits for
+  the target thread idle/stable boundary, and starts a continuation turn.
+- Refresh prompt text uses environment transport, never argv or operation
+  evidence.
+- The operation is proof scheduling, not final proof. Final proof still
+  requires the started continuation turn to call the changed model-callable
+  tool.
+
 Phase 5 starts with safe remote TUI cleanup:
 
 - `codex_session_close` targets only Codex remote TUI processes for the current
@@ -164,8 +179,9 @@ Phase 5 launch is intentionally scoped:
 
 - `codex_session_launch` builds or schedules a Codex remote TUI launch against
   an already-known loopback App Server URL.
-- It does not start App Server in this first cut; App Server lifecycle belongs
-  to the later port/probe work.
+- It does not start App Server; App Server lifecycle belongs to
+  `codex_app_server_start`, `codex_app_server_status`, and
+  `codex_app_server_stop`.
 - It defaults to `dryRun: true`, requires `confirm: true` for real launch, and
   omits initial prompt text from previews and operation evidence.
 - Its first callable proof ran in `dryRun` mode and confirmed
@@ -204,6 +220,45 @@ Phase 6 also adds read-only launcher state visibility:
 - Its first callable proof returned `resolved.source: legacy-state`,
   `resolved.url: ws://127.0.0.1:57798`, primary state absent, legacy state
   present, and workspace paths redacted as `<workspace>`.
+
+Phase 6 promotes the first Windows App Server launcher hardening:
+
+- `codex-agent-session-manager remote` starts the managed App Server through a
+  generated `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe`
+  when running on Windows and the resolved Codex command is a native
+  `codex.exe`.
+- The visible Codex TUI still launches directly; only the background App Server
+  process is wrapped.
+- This keeps the user's global MCP configuration untouched. The launcher is a
+  session/workspace lifecycle concern, not a permanent rewrite of
+  `~/.codex/config.toml`.
+- A `--no-resume` operational test started `windows-hidden-stdio-launcher.exe`
+  as the App Server root and observed `codex.exe app-server --listen ...` as
+  its child.
+
+Phase 7 starts App Server lifecycle management from MCP:
+
+- `codex_app_server_start` builds the same no-resume managed App Server plan
+  used by the CLI `remote` command.
+- It defaults to `dryRun: true`; real execution requires `confirm: true`.
+- Real execution creates an `app_server_start` operation and schedules a
+  detached child, so the tool call returns before App Server startup can race
+  with MCP process lifecycle.
+- The child runs the no-resume remote plan, writes primary
+  `.codex-agent-session-manager/state/app-server.json`, records launcher output
+  as operation evidence, and does not launch a TUI.
+- `codex_app_server_status` reads only primary workspace launcher state,
+  reports process-tree liveness, and can probe `/readyz`.
+- `codex_app_server_stop` stops only the primary workspace-owned App Server
+  process tree. It defaults to `dryRun: true`, requires `dryRun: false` plus
+  `confirm: true` for real execution, and schedules a detached child so the
+  MCP tool call can return before the serving App Server is stopped.
+- Stop marks primary launcher state as `stopped` and `owned: false`; it does
+  not close remote TUI windows, archive threads, or alter user global MCP
+  configuration.
+- `codex_session_launch` remains scoped to visible TUI launch against a known
+  App Server URL/state. Keeping these operations separate avoids hiding process
+  ownership changes inside a TUI-launch command.
 
 ## Boundaries
 

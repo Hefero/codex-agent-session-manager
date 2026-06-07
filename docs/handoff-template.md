@@ -55,10 +55,8 @@ Validation already expected:
 - npm run remote -- --dry-run --no-resume
 
 Next likely work:
-1. Continue Phase 6 probes. Windows hidden stdio launcher remains explicitly
-   probe-gated.
-2. Ask the operator to run real `npm run remote` and `/mcp` in PowerShell when
-   visual popup behavior needs validation.
+1. Inspect git status and read `docs/project-plan.md`.
+2. Prefer `codex_mcp_refresh` for MCP reload plus continuation proof.
 3. Keep tool schemas explicit and do not expose raw arbitrary App Server RPC.
 4. Do not assume broad session cleanup is safe without explicit thread/process
    ownership evidence.

@@ -34,6 +34,10 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_operation_read`
   - `codex_operation_wait`
   - `codex_mcp_reload`
+  - `codex_mcp_refresh`
+  - `codex_app_server_start`
+  - `codex_app_server_status`
+  - `codex_app_server_stop`
   - `codex_session_continue`
   - `codex_session_close`
   - `codex_session_launch`
@@ -45,6 +49,11 @@ The current MCP surface is still small, but already dogfooded:
 MCP status from App Server is treated as diagnostic only. Callable-catalog proof
 requires a real model-callable tool invocation from the correct continuation or
 replacement boundary.
+
+For the common “MCP changed, refresh and continue” path, use
+`codex_mcp_refresh`: it reloads MCP servers, records before/after status
+evidence, waits for the target thread to become idle, and starts the
+continuation turn. The continuation must still perform the actual proof call.
 
 ## Development
 
@@ -77,6 +86,20 @@ The `remote` command reads and writes only
 `.codex-agent-session-manager/state/app-server.json`; it intentionally ignores
 legacy hot-reloader launcher state so Windows popup tests can compare the new
 flow against the old launcher.
+
+On Windows, `remote` starts the managed App Server through a generated
+`.codex-agent-session-manager/windows-hidden-stdio-launcher.exe` when the Codex
+binary resolves to `codex.exe`. The visible Codex TUI still launches normally;
+only the background App Server process is wrapped. This does not edit the
+user's global `~/.codex/config.toml`.
+
+Agents can start or reuse the same managed App Server path through
+`codex_app_server_start`. The tool records a durable operation and leaves TUI
+launching to `codex_session_launch`, keeping App Server lifecycle and visible
+session launch as separate operations. Agents can inspect the managed process
+with `codex_app_server_status` and stop only the workspace-owned App Server
+tree with `codex_app_server_stop`; neither operation rewrites user global MCP
+configuration.
 
 ## Documentation
 

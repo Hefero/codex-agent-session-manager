@@ -72,6 +72,31 @@ test('runRemoteCommand dry run redacts workspace and prints traditional commands
   }
 });
 
+test('buildRemotePlan wraps Windows App Server process with hidden launcher only', async () => {
+  const workspace = tempWorkspace();
+  try {
+    const codexCommand = join(workspace, 'codex.exe');
+    writeFileSync(codexCommand, '');
+
+    const plan = await buildRemotePlan(
+      { workspace, port: '4506', noResume: true, dryRun: true },
+      { codexCommandResolver: () => codexCommand },
+    );
+
+    if (process.platform === 'win32') {
+      assert.equal(plan.server.command, join(workspace, '.codex-agent-session-manager', 'windows-hidden-stdio-launcher.exe'));
+      assert.equal(plan.server.args[0], codexCommand);
+      assert.equal(plan.tui.command, codexCommand);
+    } else {
+      assert.equal(plan.server.command, codexCommand);
+      assert.equal(plan.server.args[0], 'app-server');
+      assert.equal(plan.tui.command, codexCommand);
+    }
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('executeRemotePlan starts App Server in no-resume mode and writes primary state', async () => {
   const workspace = tempWorkspace();
   const output: string[] = [];

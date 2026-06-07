@@ -4,12 +4,13 @@ import { z } from 'zod';
 
 import { connectAppServerClient } from '../app-server/client.js';
 import { resolveAppServerUrl } from '../app-server/config.js';
-import type { ThreadReadResult, TurnStartParams, TurnStartResult } from '../app-server/protocol.js';
+import type { McpServerStatusEntry } from '../app-server/protocol.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
+import { waitForThreadIdle, type SessionContinueClient } from './session-continue.js';
 
-const DEFAULT_PROMPT = 'Codex session continuation turn. Refresh callable tool context and continue validation.';
-const CONTINUE_PROMPT_ENV = 'CODEX_AGENT_SESSION_MANAGER_CONTINUE_PROMPT';
+const DEFAULT_PROMPT = 'Codex MCP refresh turn. Refresh callable tool context and continue validation.';
+const REFRESH_PROMPT_ENV = 'CODEX_AGENT_SESSION_MANAGER_MCP_REFRESH_PROMPT';
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_CONTINUATION_TIMEOUT_MS = 180_000;
 const DEFAULT_CONTINUATION_POLL_MS = 1_000;
@@ -20,23 +21,23 @@ const MIN_CONTINUATION_POLL_MS = 100;
 const MAX_CONTINUATION_POLL_MS = 10_000;
 const MAX_CONTINUATION_STABLE_MS = 10_000;
 const MAX_PROMPT_CHARS = 4_000;
-const MAX_ATTEMPTS_EVIDENCE = 20;
-const INTERNAL_COMMAND = 'run-session-continue-operation';
-const CONTINUE_NEXT_ACTION = 'Use codex_operation_wait with this operationId, then codex_operation_read for final continuation evidence.';
+const INTERNAL_COMMAND = 'run-mcp-refresh-operation';
+const REFRESH_NEXT_ACTION = 'Use codex_operation_wait with this operationId, then count proof only when the started continuation turn calls the changed model-callable tool.';
 
 const appServerUrlSchema = z
   .string()
   .optional()
   .describe('Optional loopback App Server websocket URL. If omitted, CODEX_APP_SERVER_URL or workspace launcher state is used.');
 
-export const sessionContinueInputSchema = {
+export const mcpRefreshInputSchema = {
   appServerUrl: appServerUrlSchema,
-  threadId: z.string().min(1).describe('Explicit target Codex thread id. Required in this first implementation.'),
+  threadId: z.string().min(1).describe('Explicit target Codex thread id for MCP status evidence and continuation.'),
   prompt: z
     .string()
     .max(MAX_PROMPT_CHARS)
     .optional()
     .describe('Continuation prompt text. It is passed to the child via environment, never argv or operation evidence.'),
+  highlightTools: z.array(z.string().min(1)).max(50).optional().describe('Tool names to flag in before/after MCP status summaries.'),
   timeoutMs: z.number().int().min(1_000).max(MAX_REQUEST_TIMEOUT_MS).optional().describe('App Server request timeout in milliseconds.'),
   continuationTimeoutMs: z
     .number()
@@ -61,20 +62,21 @@ export const sessionContinueInputSchema = {
     .describe('Extra idle stability window before turn/start.'),
 };
 
-const sessionContinueInputObject = z.object(sessionContinueInputSchema);
-type SessionContinueInput = z.infer<typeof sessionContinueInputObject>;
+const mcpRefreshInputObject = z.object(mcpRefreshInputSchema);
+type McpRefreshInput = z.infer<typeof mcpRefreshInputObject>;
 
-export interface SessionContinueOperationInput {
+export interface McpRefreshOperationInput {
   operationId: string;
   appServerUrl: string;
   threadId: string;
+  highlightTools?: string[];
   timeoutMs?: number;
   continuationTimeoutMs?: number;
   continuationPollMs?: number;
   continuationStableMs?: number;
 }
 
-export interface SessionContinueBackgroundEvidence {
+export interface McpRefreshBackgroundEvidence {
   scheduled: true;
   pid: number | null;
   detached: true;
@@ -84,94 +86,92 @@ export interface SessionContinueBackgroundEvidence {
   promptTransport: 'environment';
 }
 
-export interface SessionContinueClient {
-  initialize(): Promise<unknown>;
-  readThread(input: { threadId: string; includeTurns: boolean }): Promise<ThreadReadResult>;
-  startTurn(input: TurnStartParams): Promise<TurnStartResult>;
-  close(): void;
+export interface McpRefreshClient extends SessionContinueClient {
+  reloadMcpServers(): Promise<unknown>;
+  listMcpServerStatuses(input: { threadId: string; limit?: number }): Promise<{
+    statuses: McpServerStatusEntry[];
+    pageCount: number;
+  }>;
 }
 
-export type SessionContinueClientFactory = (options: { url: string; requestTimeoutMs?: number }) => Promise<SessionContinueClient>;
-export type SessionContinueScheduler = (input: SessionContinueOperationInput, prompt: string) => SessionContinueBackgroundEvidence;
-
-export interface ThreadReadyStatus {
-  type: string | null;
-  activeFlags: string[] | null;
-}
-
-export interface ThreadReadyAttempt {
-  elapsedMs: number;
-  status: string | null;
-  activeFlags: string[] | null;
-  idleStableForMs: number;
-}
-
-export interface ThreadReadyResult {
-  ok: boolean;
-  status: string | null;
-  activeFlags: string[] | null;
-  elapsedMs: number;
-  stableMs: number;
-  stableForMs: number;
-  attemptCount: number;
-  attempts: ThreadReadyAttempt[];
-  error?: string;
-}
+export type McpRefreshClientFactory = (options: { url: string; requestTimeoutMs?: number }) => Promise<McpRefreshClient>;
+export type McpRefreshScheduler = (input: McpRefreshOperationInput, prompt: string) => McpRefreshBackgroundEvidence;
 
 function boundedInteger(value: number | undefined, fallback: number, min: number, max: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+function namesFromCollection(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+        const name = (entry as Record<string, unknown>).name;
+        return typeof name === 'string' ? name : null;
+      })
+      .filter((name): name is string => name !== null)
+      .sort();
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort();
+  }
+  return [];
 }
 
-function redactContinuationPrompt(text: string, promptToRedact: string | undefined): string {
+function summarizeMcpStatus(statuses: McpServerStatusEntry[], highlightedTools: readonly string[] = []): Array<Record<string, unknown>> {
+  const highlightSet = new Set(highlightedTools);
+  return statuses.map((server) => {
+    const toolNames = namesFromCollection(server.tools);
+    return {
+      name: server.name ?? null,
+      serverName: server.serverInfo?.name ?? null,
+      serverVersion: server.serverInfo?.version ?? null,
+      toolCount: toolNames.length,
+      requestedToolPresence: Object.fromEntries([...highlightSet].map((name) => [name, toolNames.includes(name)])),
+      authStatusIncluded: server.authStatus !== undefined,
+    };
+  });
+}
+
+async function collectStatusEvidence(
+  client: McpRefreshClient,
+  input: { threadId: string; highlightTools?: string[] },
+): Promise<Record<string, unknown>> {
+  const result = await client.listMcpServerStatuses({ threadId: input.threadId, limit: 100 });
+  return {
+    threadId: input.threadId,
+    pageCount: result.pageCount,
+    serverCount: result.statuses.length,
+    servers: summarizeMcpStatus(result.statuses, input.highlightTools),
+  };
+}
+
+function redactRefreshPrompt(text: string, promptToRedact: string | undefined): string {
   const redacted = redactSensitiveText(text);
   if (promptToRedact === undefined || promptToRedact.length === 0) return redacted;
-  return redacted.split(promptToRedact).join('<redacted:continuation-prompt>');
+  return redacted.split(promptToRedact).join('<redacted:mcp-refresh-prompt>');
 }
 
 function publicFailure(error: unknown, promptToRedact?: string): unknown {
   if (error instanceof Error) {
     return {
       name: error.name,
-      message: redactContinuationPrompt(error.message, promptToRedact),
+      message: redactRefreshPrompt(error.message, promptToRedact),
     };
   }
-  return redactContinuationPrompt(String(redactValue(String(error))), promptToRedact);
+  return redactRefreshPrompt(String(redactValue(String(error))), promptToRedact);
 }
 
 function recordFrom(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
 }
 
-function operationInputForOptionalValues(input: {
-  operationId: string;
-  appServerUrl: string;
-  threadId: string;
-  timeoutMs?: number | undefined;
-  continuationTimeoutMs?: number | undefined;
-  continuationPollMs?: number | undefined;
-  continuationStableMs?: number | undefined;
-}): SessionContinueOperationInput {
-  const operationInput: SessionContinueOperationInput = {
-    operationId: input.operationId,
-    appServerUrl: input.appServerUrl,
-    threadId: input.threadId,
-  };
-  if (input.timeoutMs !== undefined) operationInput.timeoutMs = input.timeoutMs;
-  if (input.continuationTimeoutMs !== undefined) operationInput.continuationTimeoutMs = input.continuationTimeoutMs;
-  if (input.continuationPollMs !== undefined) operationInput.continuationPollMs = input.continuationPollMs;
-  if (input.continuationStableMs !== undefined) operationInput.continuationStableMs = input.continuationStableMs;
-  return operationInput;
-}
-
 function requestedEvidence(input: {
   appServerUrl: string;
   threadId: string;
   prompt: string;
+  highlightTools?: string[] | undefined;
   timeoutMs?: number | undefined;
   continuationTimeoutMs?: number | undefined;
   continuationPollMs?: number | undefined;
@@ -183,125 +183,67 @@ function requestedEvidence(input: {
     promptProvided: input.prompt.length > 0,
     promptCharCount: input.prompt.length,
     promptTransport: 'environment',
+    highlightTools: input.highlightTools ?? [],
     cwdPreview: '<workspace>',
     timeoutMs: input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
     continuationTimeoutMs: input.continuationTimeoutMs ?? DEFAULT_CONTINUATION_TIMEOUT_MS,
     continuationPollMs: input.continuationPollMs ?? DEFAULT_CONTINUATION_POLL_MS,
     continuationStableMs: input.continuationStableMs ?? DEFAULT_CONTINUATION_STABLE_MS,
+    statusEvidenceRequested: true,
   };
 }
 
-function threadReadyStatus(read: ThreadReadResult): ThreadReadyStatus {
-  const status = read.thread?.status ?? null;
-  return {
-    type: typeof status?.type === 'string' ? status.type : null,
-    activeFlags: Array.isArray(status?.activeFlags) ? status.activeFlags.filter((entry) => typeof entry === 'string') : null,
+function operationInputForOptionalValues(input: {
+  operationId: string;
+  appServerUrl: string;
+  threadId: string;
+  highlightTools?: string[] | undefined;
+  timeoutMs?: number | undefined;
+  continuationTimeoutMs?: number | undefined;
+  continuationPollMs?: number | undefined;
+  continuationStableMs?: number | undefined;
+}): McpRefreshOperationInput {
+  const operationInput: McpRefreshOperationInput = {
+    operationId: input.operationId,
+    appServerUrl: input.appServerUrl,
+    threadId: input.threadId,
   };
-}
-
-function pushAttempt(attempts: ThreadReadyAttempt[], attempt: ThreadReadyAttempt): void {
-  attempts.push(attempt);
-  if (attempts.length > MAX_ATTEMPTS_EVIDENCE) {
-    attempts.shift();
-  }
-}
-
-export async function waitForThreadIdle(
-  client: SessionContinueClient,
-  input: {
-    threadId: string;
-    timeoutMs: number;
-    pollMs: number;
-    stableMs: number;
-  },
-): Promise<ThreadReadyResult> {
-  const startedAt = Date.now();
-  const deadline = startedAt + input.timeoutMs;
-  const attempts: ThreadReadyAttempt[] = [];
-  let attemptCount = 0;
-  let idleSince: number | null = null;
-  let lastStatus: ThreadReadyStatus = { type: null, activeFlags: null };
-
-  while (Date.now() <= deadline) {
-    const elapsedMs = Date.now() - startedAt;
-    const read = await client.readThread({ threadId: input.threadId, includeTurns: false });
-    const status = threadReadyStatus(read);
-    lastStatus = status;
-    const idleStableForMs = idleSince === null ? 0 : Date.now() - idleSince;
-    attemptCount += 1;
-    pushAttempt(attempts, {
-      elapsedMs,
-      status: status.type,
-      activeFlags: status.activeFlags,
-      idleStableForMs,
-    });
-
-    if (status.type === 'idle') {
-      idleSince ??= Date.now();
-      const stableForMs = Date.now() - idleSince;
-      if (stableForMs >= input.stableMs) {
-        return {
-          ok: true,
-          status: status.type,
-          activeFlags: status.activeFlags,
-          elapsedMs,
-          stableMs: input.stableMs,
-          stableForMs,
-          attemptCount,
-          attempts,
-        };
-      }
-    } else {
-      idleSince = null;
-    }
-
-    if (status.type === 'systemError' || status.type === 'notLoaded') {
-      return {
-        ok: false,
-        status: status.type,
-        activeFlags: status.activeFlags,
-        elapsedMs,
-        stableMs: input.stableMs,
-        stableForMs: 0,
-        attemptCount,
-        attempts,
-        error: `Thread ${input.threadId} entered status ${status.type}.`,
-      };
-    }
-
-    await sleep(Math.min(input.pollMs, Math.max(0, deadline - Date.now())));
-  }
-
-  return {
-    ok: false,
-    status: lastStatus.type,
-    activeFlags: lastStatus.activeFlags,
-    elapsedMs: Date.now() - startedAt,
-    stableMs: input.stableMs,
-    stableForMs: 0,
-    attemptCount,
-    attempts,
-    error: `Timed out waiting ${input.timeoutMs}ms for thread ${input.threadId} to become idle for ${input.stableMs}ms.`,
-  };
+  if (input.highlightTools !== undefined) operationInput.highlightTools = input.highlightTools;
+  if (input.timeoutMs !== undefined) operationInput.timeoutMs = input.timeoutMs;
+  if (input.continuationTimeoutMs !== undefined) operationInput.continuationTimeoutMs = input.continuationTimeoutMs;
+  if (input.continuationPollMs !== undefined) operationInput.continuationPollMs = input.continuationPollMs;
+  if (input.continuationStableMs !== undefined) operationInput.continuationStableMs = input.continuationStableMs;
+  return operationInput;
 }
 
 function promptFromEnv(env: NodeJS.ProcessEnv = process.env): string {
-  const prompt = env[CONTINUE_PROMPT_ENV] ?? DEFAULT_PROMPT;
+  const prompt = env[REFRESH_PROMPT_ENV] ?? DEFAULT_PROMPT;
   if (prompt.length > MAX_PROMPT_CHARS) {
-    throw new Error(`Continuation prompt must be at most ${MAX_PROMPT_CHARS} characters.`);
+    throw new Error(`MCP refresh prompt must be at most ${MAX_PROMPT_CHARS} characters.`);
   }
   return prompt;
 }
 
 function childEnvWithPrompt(prompt: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  delete env[CONTINUE_PROMPT_ENV];
-  env[CONTINUE_PROMPT_ENV] = prompt;
+  delete env[REFRESH_PROMPT_ENV];
+  env[REFRESH_PROMPT_ENV] = prompt;
   return env;
 }
 
-export function buildSessionContinueOperationArgs(input: SessionContinueOperationInput): string[] {
-  const args = [INTERNAL_COMMAND, '--operation-id', input.operationId, '--app-server-url', input.appServerUrl, '--thread-id', input.threadId];
+export function buildMcpRefreshOperationArgs(input: McpRefreshOperationInput): string[] {
+  const args = [
+    INTERNAL_COMMAND,
+    '--operation-id',
+    input.operationId,
+    '--app-server-url',
+    input.appServerUrl,
+    '--thread-id',
+    input.threadId,
+  ];
+  for (const toolName of input.highlightTools ?? []) {
+    args.push('--highlight-tool', toolName);
+  }
   if (input.timeoutMs !== undefined) args.push('--timeout-ms', String(input.timeoutMs));
   if (input.continuationTimeoutMs !== undefined) args.push('--continuation-timeout-ms', String(input.continuationTimeoutMs));
   if (input.continuationPollMs !== undefined) args.push('--continuation-poll-ms', String(input.continuationPollMs));
@@ -309,7 +251,7 @@ export function buildSessionContinueOperationArgs(input: SessionContinueOperatio
   return args;
 }
 
-export function parseSessionContinueOperationArgs(argv: readonly string[]): SessionContinueOperationInput {
+export function parseMcpRefreshOperationArgs(argv: readonly string[]): McpRefreshOperationInput {
   let operationId: string | undefined;
   let appServerUrl: string | undefined;
   let threadId: string | undefined;
@@ -317,6 +259,7 @@ export function parseSessionContinueOperationArgs(argv: readonly string[]): Sess
   let continuationTimeoutMs: number | undefined;
   let continuationPollMs: number | undefined;
   let continuationStableMs: number | undefined;
+  const highlightTools: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -329,6 +272,9 @@ export function parseSessionContinueOperationArgs(argv: readonly string[]): Sess
       index += 1;
     } else if (arg === '--thread-id' && value !== undefined) {
       threadId = value;
+      index += 1;
+    } else if (arg === '--highlight-tool' && value !== undefined) {
+      highlightTools.push(value);
       index += 1;
     } else if (arg === '--timeout-ms' && value !== undefined) {
       timeoutMs = Number(value);
@@ -355,20 +301,27 @@ export function parseSessionContinueOperationArgs(argv: readonly string[]): Sess
     operationId,
     appServerUrl: resolveAppServerUrl(appServerUrl),
     threadId,
-    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
-    continuationTimeoutMs: Number.isFinite(continuationTimeoutMs) ? continuationTimeoutMs : undefined,
-    continuationPollMs: Number.isFinite(continuationPollMs) ? continuationPollMs : undefined,
-    continuationStableMs: Number.isFinite(continuationStableMs) ? continuationStableMs : undefined,
+    highlightTools: highlightTools.length > 0 ? highlightTools : undefined,
+    timeoutMs: typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) ? timeoutMs : undefined,
+    continuationTimeoutMs: typeof continuationTimeoutMs === 'number' && Number.isFinite(continuationTimeoutMs)
+      ? continuationTimeoutMs
+      : undefined,
+    continuationPollMs: typeof continuationPollMs === 'number' && Number.isFinite(continuationPollMs)
+      ? continuationPollMs
+      : undefined,
+    continuationStableMs: typeof continuationStableMs === 'number' && Number.isFinite(continuationStableMs)
+      ? continuationStableMs
+      : undefined,
   });
 }
 
-export function spawnSessionContinueOperation(input: SessionContinueOperationInput, prompt: string): SessionContinueBackgroundEvidence {
+export function spawnMcpRefreshOperation(input: McpRefreshOperationInput, prompt: string): McpRefreshBackgroundEvidence {
   const cliEntry = process.argv[1];
   if (!cliEntry) {
-    throw new Error('Cannot schedule session continuation because the current CLI entry path is unavailable.');
+    throw new Error('Cannot schedule MCP refresh operation because the current CLI entry path is unavailable.');
   }
 
-  const child = spawn(process.execPath, [...process.execArgv, cliEntry, ...buildSessionContinueOperationArgs(input)], {
+  const child = spawn(process.execPath, [...process.execArgv, cliEntry, ...buildMcpRefreshOperationArgs(input)], {
     cwd: process.cwd(),
     detached: true,
     stdio: 'ignore',
@@ -389,21 +342,22 @@ export function spawnSessionContinueOperation(input: SessionContinueOperationInp
   };
 }
 
-export function buildSessionContinuePayload(
-  input: SessionContinueInput,
+export function buildMcpRefreshPayload(
+  input: McpRefreshInput,
   deps: {
     store?: OperationStore;
-    scheduler?: SessionContinueScheduler;
+    scheduler?: McpRefreshScheduler;
   } = {},
 ): Record<string, unknown> {
   const store = deps.store ?? operationStore;
-  const scheduler = deps.scheduler ?? spawnSessionContinueOperation;
+  const scheduler = deps.scheduler ?? spawnMcpRefreshOperation;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
   const prompt = input.prompt ?? DEFAULT_PROMPT;
   const requested = requestedEvidence({
     appServerUrl,
     threadId: input.threadId,
     prompt,
+    highlightTools: input.highlightTools,
     timeoutMs: input.timeoutMs,
     continuationTimeoutMs: input.continuationTimeoutMs,
     continuationPollMs: input.continuationPollMs,
@@ -411,10 +365,10 @@ export function buildSessionContinuePayload(
   });
 
   const operation = store.create({
-    kind: 'session_continue',
+    kind: 'mcp_refresh',
     status: 'running',
     evidence: { requested },
-    nextAction: CONTINUE_NEXT_ACTION,
+    nextAction: REFRESH_NEXT_ACTION,
   });
 
   try {
@@ -422,6 +376,7 @@ export function buildSessionContinuePayload(
       operationId: operation.id,
       appServerUrl,
       threadId: input.threadId,
+      highlightTools: input.highlightTools,
       timeoutMs: input.timeoutMs,
       continuationTimeoutMs: input.continuationTimeoutMs,
       continuationPollMs: input.continuationPollMs,
@@ -431,7 +386,7 @@ export function buildSessionContinuePayload(
     const updatedOperation =
       store.update(operation.id, {
         evidence: { requested, background },
-        nextAction: CONTINUE_NEXT_ACTION,
+        nextAction: REFRESH_NEXT_ACTION,
       }) ?? operation;
 
     return {
@@ -450,11 +405,11 @@ export function buildSessionContinuePayload(
   }
 }
 
-export async function runSessionContinueOperation(
-  input: SessionContinueOperationInput,
+export async function runMcpRefreshOperation(
+  input: McpRefreshOperationInput,
   deps: {
     store?: OperationStore;
-    connectClient?: SessionContinueClientFactory;
+    connectClient?: McpRefreshClientFactory;
     env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<OperationRecord | null> {
@@ -470,6 +425,7 @@ export async function runSessionContinueOperation(
     appServerUrl,
     threadId: input.threadId,
     prompt,
+    highlightTools: input.highlightTools,
     timeoutMs,
     continuationTimeoutMs,
     continuationPollMs,
@@ -477,11 +433,18 @@ export async function runSessionContinueOperation(
   });
   const existingEvidence = recordFrom(store.read(input.operationId)?.evidence);
 
-  let client: SessionContinueClient | null = null;
+  let client: McpRefreshClient | null = null;
   const evidence: Record<string, unknown> = { ...existingEvidence, requested };
   try {
     client = await connectClient({ url: appServerUrl, requestTimeoutMs: timeoutMs });
     await client.initialize();
+
+    const statusInput: { threadId: string; highlightTools?: string[] } = { threadId: input.threadId };
+    if (input.highlightTools !== undefined) statusInput.highlightTools = input.highlightTools;
+    evidence.statusBefore = await collectStatusEvidence(client, statusInput);
+    await client.reloadMcpServers();
+    evidence.reload = { requested: true };
+    evidence.statusAfter = await collectStatusEvidence(client, statusInput);
 
     const ready = await waitForThreadIdle(client, {
       threadId: input.threadId,
@@ -492,13 +455,13 @@ export async function runSessionContinueOperation(
     evidence.ready = ready;
     if (!ready.ok) {
       return store.fail(input.operationId, {
-        failure: { name: 'ThreadNotReady', message: ready.error ?? 'Thread did not become ready for continuation.' },
+        failure: { name: 'ThreadNotReady', message: ready.error ?? 'Thread did not become ready for MCP refresh continuation.' },
         evidence,
-        nextAction: 'Inspect ready evidence and retry continuation when the target thread is idle.',
+        nextAction: 'Inspect ready evidence and retry refresh when the target thread is idle.',
       });
     }
 
-    const clientUserMessageId = `codex-session-manager-continue-${Date.now()}`;
+    const clientUserMessageId = `codex-session-manager-refresh-${Date.now()}`;
     const cwd = resolve(process.cwd());
     const started = await client.startTurn({
       threadId: input.threadId,
@@ -517,7 +480,7 @@ export async function runSessionContinueOperation(
 
     return store.complete(input.operationId, {
       evidence,
-      nextAction: 'Continuation turn started. Count proof only when that fresh turn calls the target model-callable tool.',
+      nextAction: 'MCP reload requested and continuation turn started. Final proof still requires the fresh turn to call the changed tool.',
     });
   } catch (error) {
     return store.fail(input.operationId, {
@@ -530,6 +493,6 @@ export async function runSessionContinueOperation(
   }
 }
 
-export async function runSessionContinueOperationFromArgv(argv: readonly string[]): Promise<void> {
-  await runSessionContinueOperation(parseSessionContinueOperationArgs(argv));
+export async function runMcpRefreshOperationFromArgv(argv: readonly string[]): Promise<void> {
+  await runMcpRefreshOperation(parseMcpRefreshOperationArgs(argv));
 }

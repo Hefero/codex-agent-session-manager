@@ -127,6 +127,22 @@ explicit opt-in:
 Dry-run evidence now shows the selected install command and reports whether
 lifecycle scripts are allowed.
 
+### H-007: project teardown did not surface live process lifecycle clearly
+
+Status: fixed in working tree for alpha.3.
+
+The real integration probe showed that `deinit --confirm --remove-added-mcps`
+and `npm uninstall` can remove project config and packages while the current
+App Server still has MCP server processes alive from the previous loaded
+configuration. That behavior is expected because `deinit` is a file teardown
+command, not a process manager, but the CLI output did not make the boundary
+obvious enough.
+
+The fix adds lifecycle notes to human and JSON deinit output and documents that
+active App Server, remote TUI, and already-loaded MCP server processes need a
+separate stop or reload before uninstalling packages when live process teardown
+matters.
+
 ## Accepted / Deferred Risks
 
 ### D-001: custom `OperationStore({ stateFile })` is intentionally unbounded

@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { applyInitPlan, buildInitPlan } from '../src/init.js';
-import { applyDeinitPlan, buildDeinitPlan, parseDeinitArgs, runDeinitCommand } from '../src/deinit.js';
+import {
+  applyDeinitPlan,
+  buildDeinitPlan,
+  deinitPlanPreview,
+  parseDeinitArgs,
+  runDeinitCommand,
+} from '../src/deinit.js';
 import { packageName, packageVersion } from '../src/version.js';
 
 function tempWorkspace(): string {
@@ -52,9 +58,26 @@ test('runDeinitCommand defaults to dry-run and does not modify files', async () 
     const text = output.join('\n');
     assert.doesNotMatch(text, new RegExp(escapeRegExp(resolve(workspace)), 'u'));
     assert.match(text, /codex-agent-session-manager deinit dry-run/u);
+    assert.match(text, /does not stop a running Codex App Server/u);
     assert.match(text, /Dry run only; no files were changed\. Pass --confirm to apply\./u);
     assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), true);
     assert.equal(existsSync(join(workspace, 'AGENTS.md')), true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('deinit JSON preview includes active process lifecycle notes', () => {
+  const workspace = tempWorkspace();
+  try {
+    initWorkspace(workspace);
+
+    const preview = deinitPlanPreview(buildDeinitPlan({ workspace }), false) as {
+      notes?: unknown;
+    };
+
+    assert.ok(Array.isArray(preview.notes));
+    assert.match(preview.notes.join('\n'), /already-loaded MCP server processes/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

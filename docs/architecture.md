@@ -197,6 +197,9 @@ Phase 10 also adds project teardown:
 - `deinit` does not run `npm uninstall` while the CLI is executing. Instead it
   returns `packagesToUninstall` so the operator can run npm uninstall after the
   scaffold is removed.
+- `deinit` edits project files only. It does not stop a running App Server,
+  remote TUI, or already-loaded MCP server processes, so active sessions should
+  be stopped or reloaded before package uninstall when process teardown matters.
 
 Phase 5 starts with safe remote TUI cleanup:
 

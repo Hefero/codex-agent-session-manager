@@ -426,11 +426,19 @@ export function deinitPlanPreview(plan: DeinitPlan, applied: boolean): Record<st
       dryRun: plan.dryRun,
       workspace: '<workspace>',
       actions: plan.actions,
+      notes: deinitLifecycleNotes(),
       packagesToUninstall: plan.packagesToUninstall,
       nextAction: `Run npm uninstall -D ${plan.packagesToUninstall.join(' ')} after deinit if those packages should be removed from package-lock.json and node_modules.`,
     },
     { workspace: plan.workspace },
   ) as Record<string, unknown>;
+}
+
+function deinitLifecycleNotes(): string[] {
+  return [
+    'Deinit edits project files only; it does not stop a running Codex App Server, remote TUI, or already-loaded MCP server processes.',
+    'Stop or reload active sessions before uninstalling packages if you need live MCP processes to exit.',
+  ];
 }
 
 function formatHumanDeinitPlan(plan: DeinitPlan, applied: boolean): string {
@@ -445,6 +453,10 @@ function formatHumanDeinitPlan(plan: DeinitPlan, applied: boolean): string {
     lines.push(`  ${kind} ${previewPath(action.target, plan.workspace)} - ${action.reason}`);
   }
   lines.push('', `packages to uninstall after deinit: ${plan.packagesToUninstall.join(', ')}`);
+  lines.push('', 'notes:');
+  for (const note of deinitLifecycleNotes()) {
+    lines.push(`  - ${note}`);
+  }
   if (plan.dryRun) {
     lines.push('', 'Dry run only; no files were changed. Pass --confirm to apply.');
   } else {

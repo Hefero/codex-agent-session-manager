@@ -57,7 +57,9 @@ block, generated npm scripts, managed `AGENTS.md` block, and local runtime
 ignore rule. Runtime state under `.codex-agent-session-manager/` is removed
 only with `--remove-runtime`. MCP server blocks created through `mcp add npm`
 are kept unless `--remove-added-mcps` is passed; when removed, `deinit` reports
-the npm packages to uninstall separately.
+the npm packages to uninstall separately. It does not stop a running Codex App
+Server, remote TUI, or already-loaded MCP server processes; stop or reload
+active sessions before uninstalling packages when live processes must exit.
 
 ## Current Surface
 

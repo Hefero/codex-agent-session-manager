@@ -60,7 +60,8 @@ The smoke must prove:
 - CLI init dry-run emits human-readable output for a temporary workspace
   without writing files; `--json` keeps machine-readable output.
 - CLI deinit dry-run emits human-readable output for a temporary workspace
-  without writing files and reports packages to uninstall afterward.
+  without writing files, reports packages to uninstall afterward, and warns
+  that active App Server/TUI/MCP processes require stop or reload separately.
 - CLI prompt files are accepted only from the current workspace, reject
   symlink/junction escapes, and enforce prompt size limits before scheduling
   refresh/launch/replace work.

@@ -17,8 +17,8 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 
 Phases 1, 2, and 3 are implemented and validated. Phase 4 now has durable
 operation state, `codex_mcp_reload`, and `codex_session_continue` with
-fresh-turn callable proof; check `git log` and `git status` for the latest
-commit state.
+fresh-turn callable proof. Phase 5 has started with local `codex_session_close`
+implementation; check `git log` and `git status` for the latest commit state.
 
 Implemented:
 
@@ -33,6 +33,7 @@ Implemented:
 - Operation tools `codex_operation_read` and `codex_operation_wait`.
 - Reload tool `codex_mcp_reload`.
 - Continuation tool `codex_session_continue`.
+- Remote TUI cleanup tool `codex_session_close`.
 - Resource `codex-session-manager://operations`.
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
@@ -87,6 +88,9 @@ git diff --check
 - Keep continuation prompts out of argv, structured output, operation evidence,
   and log-like failure evidence. The first `codex_session_continue`
   implementation requires an explicit `threadId`.
+- Keep session cleanup safe-first: `codex_session_close` only targets explicit
+  `threadId`, current workspace, and selected App Server URL; it defaults to
+  `dryRun:true` and requires `confirm:true` for real cleanup.
 
 ## Latest Phase 3 Evidence
 
@@ -193,6 +197,21 @@ prompt text present in operation JSON: false
 child turn marker: PHASE5_CONTINUE_CHILD_PROOF_RECEIVED
 ```
 
+## Latest Phase 5 Close Evidence
+
+`codex_session_close` was validated locally and by fresh-turn callable dry-run
+proof:
+
+```text
+callable: true
+ok: true
+dryRun: true
+confirmRequired: true
+targetCount: 0
+remoteProcessCount: 0
+appServerWillBeStopped: false
+```
+
 ## Bootstrap Rule
 
 Until the next session-management tools exist, this session is still a dogfood
@@ -206,7 +225,7 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. Tie reload plus continuation into a proof flow when useful.
+2. Continue Phase 5 with `codex_session_launch` and `codex_session_replace`.
 3. Keep all future session-manager tools small, typed, and explicitly guarded.
 
 ## Do Not Do

@@ -16,6 +16,7 @@ import {
 } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
 import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
+import { buildSessionClosePayload, sessionCloseInputSchema } from './tools/session-close.js';
 import { buildSessionContinuePayload, sessionContinueInputSchema } from './tools/session-continue.js';
 import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
 import { packageName, packageVersion } from './version.js';
@@ -211,6 +212,28 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = buildSessionContinuePayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_session_close',
+    {
+      title: 'Close Codex Remote Session',
+      description: 'Safely schedule cleanup of matching Codex remote TUI processes for an explicit threadId without stopping App Server.',
+      inputSchema: sessionCloseInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = buildSessionClosePayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

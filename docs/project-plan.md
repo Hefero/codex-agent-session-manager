@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 4 reload and continuation complete
+Status: Phase 5 close started
 
 ## Bootstrap Workflow
 
@@ -206,7 +206,34 @@ Exit criteria:
 - Replacement fallback can validate a callable MCP change when continuation is
   stale.
 
-Status: not started.
+Status: close implemented and callable; launch and replace not started.
+
+Implemented:
+
+- `codex_session_close` reports matching remote TUI process roots in `dryRun`
+  mode by default.
+- Real close requires `dryRun: false`, `confirm: true`, and explicit
+  `threadId`.
+- The close operation runs in a detached child after a short delay so the tool
+  call can return before a matching TUI is closed.
+- Matching is scoped to current workspace, App Server URL, and thread id; App
+  Server processes are excluded.
+
+Validation:
+
+- Unit tests cover matching only the explicit-thread remote TUI root, excluding
+  App Server and wrong-thread/wrong-url processes.
+- Unit tests cover dry-run evidence, confirm refusal, durable scheduling, child
+  runner completion, and argv without broad cleanup flags.
+- App Server status listed `codex_session_close`.
+- A fresh proof turn called `codex_session_close` in `dryRun` mode; it returned
+  `ok: true`, `confirmRequired: true`, `targetCount: 0`, and
+  `appServerWillBeStopped: false`.
+
+Remaining in Phase 5:
+
+- `codex_session_launch`;
+- `codex_session_replace`;
 
 ## Phase 6: Port From Experimental Repo
 

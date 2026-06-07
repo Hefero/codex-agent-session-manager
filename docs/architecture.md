@@ -100,12 +100,12 @@ The current MCP surface exposes:
 - `codex_operation_wait`
 - `codex_mcp_reload`
 - `codex_session_continue`
+- `codex_session_close`
 - `codex-session-manager://operations`
 
 Planned next tools:
 
 - `codex_session_launch`
-- `codex_session_close`
 - `codex_session_replace`
 
 ## Callable Refresh Evidence
@@ -148,6 +148,16 @@ Phase 4 continuation adds the second mutating operation:
 - The first callable proof called `codex_session_continue` from a fresh proof
   turn, observed a completed durable operation with `ready` and `turnStart`
   evidence, and observed the child turn respond with the requested marker.
+
+Phase 5 starts with safe remote TUI cleanup:
+
+- `codex_session_close` targets only Codex remote TUI processes for the current
+  workspace, selected App Server URL, and explicit `threadId`.
+- It defaults to `dryRun: true`; real cleanup requires `dryRun: false` and
+  `confirm: true`.
+- It does not stop App Server or archive thread history.
+- Its first callable proof ran in `dryRun` mode and returned
+  `appServerWillBeStopped: false`.
 
 ## Boundaries
 

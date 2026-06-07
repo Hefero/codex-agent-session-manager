@@ -24,6 +24,7 @@ Current foundation:
 - Operation tools: codex_operation_read and codex_operation_wait.
 - Reload tool: codex_mcp_reload.
 - Continuation tool: codex_session_continue.
+- Remote TUI cleanup tool: codex_session_close.
 - Durable operation resource: codex-session-manager://operations.
 - Runtime operation state: .codex-agent-session-manager/state/operations.json.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
@@ -43,12 +44,11 @@ Validation already expected:
 - npm run build
 
 Next likely work:
-1. Confirm Phase 4 reload and continuation tools are present and callable when
-   the controller asks.
-2. Tie reload plus continuation into a proof flow.
-4. Keep tool schemas explicit and do not expose raw arbitrary App Server RPC.
-5. Do not assume the worker is fully self-managing until reload/continue are
-   implemented and proven.
+1. Confirm codex_session_close is present and callable when the controller asks.
+2. Continue Phase 5 with codex_session_launch and codex_session_replace.
+3. Keep tool schemas explicit and do not expose raw arbitrary App Server RPC.
+4. Do not assume broad session cleanup is safe without explicit thread/process
+   ownership evidence.
 
 Do not:
 - log secrets or full continuation prompts;

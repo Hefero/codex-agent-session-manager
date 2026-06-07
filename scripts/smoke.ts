@@ -79,6 +79,7 @@ try {
     'codex_operation_wait',
     'codex_mcp_reload',
     'codex_session_continue',
+    'codex_session_close',
   ];
   const missingTools = requiredTools.filter((name) => !toolNames.includes(name));
   if (missingTools.length > 0) {

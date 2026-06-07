@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: Phase 4 reload and continuation
+Status: Phase 5 close started
 
 ## Scaffold Checks
 
@@ -23,6 +23,7 @@ The smoke must prove:
   - `codex_operation_wait`
   - `codex_mcp_reload`
   - `codex_session_continue`
+  - `codex_session_close`
 - `tools/call` can call `codex_session_manager_probe`.
 - `resources/list` includes `codex-session-manager://operations`.
 
@@ -49,6 +50,10 @@ Current read-only checks:
 - wait for idle/stable thread boundary before `turn/start`.
 - prove `codex_session_continue` by a real model-callable invocation, then
   confirm the child turn started and replied from the scheduled continuation.
+- report matching remote TUI process roots for explicit-thread cleanup in
+  `dryRun` mode;
+- refuse real remote TUI cleanup unless `dryRun:false` and `confirm:true`;
+- exclude App Server processes from remote TUI cleanup targets.
 
 ## Callable Catalog Proof Matrix
 

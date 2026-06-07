@@ -177,6 +177,22 @@ Phase 10 package bootstrap adds an agent-facing npm MCP installer:
   followed by a real tool call from the continuation turn; direct MCP SDK calls
   are diagnostic only.
 
+Phase 10 also adds project teardown:
+
+- `codex-agent-session-manager deinit` defaults to dry-run and requires
+  `--confirm` to apply changes.
+- It removes recognized project-scoped scaffold only: the base
+  `codex_agent_session_manager` `.codex/config.toml` block, generated npm
+  scripts, managed `AGENTS.md` block, and `.codex-agent-session-manager/`
+  gitignore rule.
+- Runtime state deletion is opt-in through `--remove-runtime`, guarded by a
+  workspace containment check before recursive deletion.
+- Managed npm MCP blocks created by `mcp add npm` are kept by default and can
+  be removed with `--remove-added-mcps`.
+- `deinit` does not run `npm uninstall` while the CLI is executing. Instead it
+  returns `packagesToUninstall` so the operator can run npm uninstall after the
+  scaffold is removed.
+
 Phase 5 starts with safe remote TUI cleanup:
 
 - `codex_session_close` targets only Codex remote TUI processes for the current

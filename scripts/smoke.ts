@@ -173,6 +173,7 @@ try {
   if (
     cliHelp.status !== 0
     || !cliHelp.stdout.includes('codex-agent-session-manager init [options]')
+    || !cliHelp.stdout.includes('codex-agent-session-manager deinit [options]')
     || !cliHelp.stdout.includes('codex-agent-session-manager app-server <start|status|stop>')
   ) {
     throw new Error(`Unexpected CLI help result: stdout=${cliHelp.stdout} stderr=${cliHelp.stderr}`);
@@ -237,6 +238,23 @@ try {
       || !cliInit.stdout.includes('Dry run only; no files were changed.')
     ) {
       throw new Error(`Unexpected CLI init dry-run result: stdout=${cliInit.stdout} stderr=${cliInit.stderr}`);
+    }
+
+    const cliDeinit = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', cliEntry, 'deinit', '--workspace', initWorkspace],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      },
+    );
+    if (
+      cliDeinit.status !== 0
+      || !cliDeinit.stdout.includes('codex-agent-session-manager deinit dry-run')
+      || !cliDeinit.stdout.includes('Dry run only; no files were changed. Pass --confirm to apply.')
+      || !cliDeinit.stdout.includes('packages to uninstall after deinit: codex-agent-session-manager')
+    ) {
+      throw new Error(`Unexpected CLI deinit dry-run result: stdout=${cliDeinit.stdout} stderr=${cliDeinit.stderr}`);
     }
   } finally {
     rmSync(initWorkspace, { recursive: true, force: true });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { startStdioServer } from './mcp-server.js';
+import { deinitUsage, runDeinitCommand } from './deinit.js';
 import { initUsage, runInitCommand } from './init.js';
 import { publicCliUsage, runPublicCommand } from './public-cli.js';
 import { remoteUsage, runRemoteCommand } from './remote.js';
@@ -19,6 +20,7 @@ function printHelp(): void {
 Usage:
   codex-agent-session-manager serve
   codex-agent-session-manager init [options]
+  codex-agent-session-manager deinit [options]
   codex-agent-session-manager remote [options]
   codex-agent-session-manager app-server <start|status|stop> [options]
   codex-agent-session-manager mcp <add|refresh> [options]
@@ -29,6 +31,7 @@ Usage:
 Commands:
   serve       Start the MCP stdio server.
   init        Initialize a project-scoped Codex session manager setup.
+  deinit      Remove the project-scoped session manager scaffold.
   remote      Start/reuse a workspace App Server and launch Codex remote.
   app-server  Manage the workspace-owned App Server lifecycle.
   mcp         Add npm MCP servers, reload MCPs, and start continuation turns.
@@ -36,6 +39,7 @@ Commands:
 
 ${publicCliUsage()}
 ${initUsage()}
+${deinitUsage()}
 `);
 }
 
@@ -64,6 +68,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'init') {
     process.exitCode = await runInitCommand(argv.slice(1));
+    return;
+  }
+
+  if (command === 'deinit') {
+    process.exitCode = await runDeinitCommand(argv.slice(1));
     return;
   }
 

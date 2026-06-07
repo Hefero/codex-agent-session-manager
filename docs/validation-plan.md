@@ -14,6 +14,7 @@ npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
 node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts deinit --workspace .
 node --import tsx src/cli.ts --help
 node --import tsx src/cli.ts mcp --help
 node --import tsx src/cli.ts mcp add npm @modelcontextprotocol/server-everything --dry-run
@@ -54,6 +55,8 @@ The smoke must prove:
   loopback URL.
 - CLI init dry-run emits human-readable output for a temporary workspace
   without writing files; `--json` keeps machine-readable output.
+- CLI deinit dry-run emits human-readable output for a temporary workspace
+  without writing files and reports packages to uninstall afterward.
 
 ## App Server And Session Checks
 
@@ -128,6 +131,11 @@ Current checks:
   runtime ignore rules, optional `AGENTS.md`, and package scripts when
   `package.json` already exists.
 - keep init idempotent and avoid editing user global Codex config.
+- deinitialize project-scoped scaffold with dry-run-by-default semantics,
+  `--confirm` for real edits, and `--remove-runtime` before deleting local
+  runtime state.
+- keep managed npm MCP blocks created by `mcp add npm` unless
+  `--remove-added-mcps` is explicitly passed.
 - keep direct MCP SDK calls classified as diagnostic only; final proof remains
   a model-callable MCP tool call from the continuation/replacement boundary.
 - package only the intended npm artifact files: `dist/`, `scripts/*.cs`,

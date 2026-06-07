@@ -35,6 +35,23 @@ Server package scripts when `package.json` exists, and creates or updates a
 small `AGENTS.md` block unless `--no-agents` is passed. It does not edit the
 user's global Codex config.
 
+Remove from a project:
+
+```powershell
+codex-agent-session-manager app-server stop --dry-run
+codex-agent-session-manager app-server stop --confirm
+codex-agent-session-manager deinit --confirm --remove-runtime
+npm uninstall -D codex-agent-session-manager
+```
+
+`deinit` defaults to dry-run unless `--confirm` is passed. It removes only the
+project-scoped scaffold it can recognize: the managed `.codex/config.toml`
+block, generated npm scripts, managed `AGENTS.md` block, and local runtime
+ignore rule. Runtime state under `.codex-agent-session-manager/` is removed
+only with `--remove-runtime`. MCP server blocks created through `mcp add npm`
+are kept unless `--remove-added-mcps` is passed; when removed, `deinit` reports
+the npm packages to uninstall separately.
+
 ## Current Surface
 
 The current MCP surface is still small, but already dogfooded:
@@ -81,6 +98,8 @@ not expose raw arbitrary App Server JSON-RPC.
 ```powershell
 codex-agent-session-manager init --dry-run
 codex-agent-session-manager init
+codex-agent-session-manager deinit --dry-run
+codex-agent-session-manager deinit --confirm --remove-runtime
 
 codex-agent-session-manager app-server start --dry-run --port auto
 codex-agent-session-manager app-server status --no-probe-ready

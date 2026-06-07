@@ -86,6 +86,17 @@ function scriptMap(packageJson: Record<string, unknown>): Record<string, string>
   return scripts as Record<string, string>;
 }
 
+function expectedGeneratedScripts(): Record<string, string> {
+  return {
+    'codex:init': 'codex-agent-session-manager init',
+    'codex:init:dry-run': 'codex-agent-session-manager init --dry-run',
+    'codex:remote': 'codex-agent-session-manager remote',
+    'codex:remote:dry-run': 'codex-agent-session-manager remote --dry-run --no-resume',
+    'codex:app-server:status': 'codex-agent-session-manager app-server status',
+    'codex:app-server:stop': 'codex-agent-session-manager app-server stop --dry-run',
+  };
+}
+
 function validateInstalledProject(targetWorkspace: string): void {
   const config = readFileSync(join(targetWorkspace, '.codex', 'config.toml'), 'utf8');
   if (!config.includes('[mcp_servers.codex_agent_session_manager]')) {
@@ -106,16 +117,38 @@ function validateInstalledProject(targetWorkspace: string): void {
   }
 
   const scripts = scriptMap(readJson(join(targetWorkspace, 'package.json')));
-  const expectedScripts: Record<string, string> = {
-    'codex:init': 'codex-agent-session-manager init',
-    'codex:init:dry-run': 'codex-agent-session-manager init --dry-run',
-    'codex:remote': 'codex-agent-session-manager remote',
-    'codex:remote:dry-run': 'codex-agent-session-manager remote --dry-run --no-resume',
-    'codex:app-server:status': 'codex-agent-session-manager app-server status',
-    'codex:app-server:stop': 'codex-agent-session-manager app-server stop --dry-run',
-  };
+  const expectedScripts = expectedGeneratedScripts();
   for (const [name, command] of Object.entries(expectedScripts)) {
     if (scripts[name] !== command) throw new Error(`Expected package script ${name}=${command}.`);
+  }
+}
+
+function validateDeinitializedProject(targetWorkspace: string): void {
+  const configPath = join(targetWorkspace, '.codex', 'config.toml');
+  if (existsSync(configPath)) {
+    const config = readFileSync(configPath, 'utf8');
+    if (config.includes('codex_agent_session_manager') || config.includes('# BEGIN codex-agent-session-manager')) {
+      throw new Error('deinit did not remove the session-manager MCP config block.');
+    }
+  }
+
+  const gitignorePath = join(targetWorkspace, '.gitignore');
+  if (existsSync(gitignorePath) && readFileSync(gitignorePath, 'utf8').includes('.codex-agent-session-manager/')) {
+    throw new Error('deinit did not remove the runtime gitignore entry.');
+  }
+
+  const agentsPath = join(targetWorkspace, 'AGENTS.md');
+  if (existsSync(agentsPath) && readFileSync(agentsPath, 'utf8').includes('codex-agent-session-manager:start')) {
+    throw new Error('deinit did not remove the managed AGENTS.md block.');
+  }
+
+  const scripts = scriptMap(readJson(join(targetWorkspace, 'package.json')));
+  for (const scriptName of Object.keys(expectedGeneratedScripts())) {
+    if (scripts[scriptName] !== undefined) throw new Error(`deinit did not remove generated script ${scriptName}.`);
+  }
+
+  if (existsSync(join(targetWorkspace, '.codex-agent-session-manager'))) {
+    throw new Error('deinit --remove-runtime did not delete runtime state.');
   }
 }
 
@@ -155,6 +188,10 @@ try {
   if (!remoteDryRun.includes('"dryRun": true') || !remoteDryRun.includes('"stateFile"')) {
     throw new Error(`Unexpected codex:remote:dry-run output: ${remoteDryRun}`);
   }
+
+  run(process.execPath, [installedCli, 'deinit', '--workspace', targetWorkspace], targetWorkspace);
+  run(process.execPath, [installedCli, 'deinit', '--workspace', targetWorkspace, '--confirm', '--remove-runtime'], targetWorkspace);
+  validateDeinitializedProject(targetWorkspace);
 
   process.stdout.write(`${JSON.stringify({ ok: true, packedFiles: files.size }, null, 2)}\n`);
 } finally {

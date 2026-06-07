@@ -117,10 +117,23 @@ function ensureTrailingNewline(content: string): string {
   return content.endsWith('\n') ? content : `${content}\n`;
 }
 
+function findMarkerLine(content: string, marker: string, fromIndex = 0): number {
+  let searchIndex = fromIndex;
+  while (true) {
+    const index = content.indexOf(marker, searchIndex);
+    if (index < 0) return -1;
+    const before = index === 0 || content[index - 1] === '\n';
+    const afterIndex = index + marker.length;
+    const after = afterIndex === content.length || content[afterIndex] === '\n' || content[afterIndex] === '\r';
+    if (before && after) return index;
+    searchIndex = afterIndex;
+  }
+}
+
 function replaceMarkedBlock(content: string, start: string, end: string, block: string): string | null {
-  const startIndex = content.indexOf(start);
+  const startIndex = findMarkerLine(content, start);
   if (startIndex < 0) return null;
-  const endIndex = content.indexOf(end, startIndex + start.length);
+  const endIndex = findMarkerLine(content, end, startIndex + start.length);
   if (endIndex < 0) throw new Error(`Found ${start} without ${end}.`);
 
   const before = content.slice(0, startIndex).trimEnd();

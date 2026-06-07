@@ -12,6 +12,7 @@ Early scope:
 - reload MCP server processes and continue after an idle boundary;
 - close or replace stale managed remote sessions;
 - track operations with status, logs, and next actions;
+- install npm MCP packages into project-scoped Codex config;
 - validate MCP callable-catalog changes from a fresh model turn.
 
 The project is intentionally starting from the session-management architecture,
@@ -48,6 +49,7 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_thread_context`
   - `codex_operation_read`
   - `codex_operation_wait`
+  - `codex_mcp_add_npm`
   - `codex_mcp_reload`
   - `codex_mcp_refresh`
   - `codex_app_server_start`
@@ -84,6 +86,8 @@ codex-agent-session-manager app-server start --dry-run --port auto
 codex-agent-session-manager app-server status --no-probe-ready
 codex-agent-session-manager app-server stop --dry-run
 
+codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --dry-run
+codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything
 codex-agent-session-manager mcp refresh --thread-id <thread-id>
 
 codex-agent-session-manager session launch --thread-id <thread-id> --dry-run
@@ -99,6 +103,11 @@ when avoiding prompt text in shell history.
 `init` is the exception: it prints a human-readable action list by default.
 Use `codex-agent-session-manager init --json` when automation needs the
 machine-readable form.
+
+`mcp add npm` installs an npm MCP package locally and writes only the
+project-scoped `.codex/config.toml`. It does not edit the user's global Codex
+config and it does not count as callable proof; run `mcp refresh` and validate
+with a real tool call from the continuation.
 
 ## Development
 

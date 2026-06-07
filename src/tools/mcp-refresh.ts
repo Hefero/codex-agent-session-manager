@@ -22,7 +22,7 @@ const MAX_CONTINUATION_POLL_MS = 10_000;
 const MAX_CONTINUATION_STABLE_MS = 10_000;
 const MAX_PROMPT_CHARS = 4_000;
 const INTERNAL_COMMAND = 'run-mcp-refresh-operation';
-const REFRESH_NEXT_ACTION = 'Use codex_operation_wait with this operationId, then count proof only when the started continuation turn calls the changed model-callable tool.';
+const REFRESH_NEXT_ACTION = 'Let the current turn finish. The background operation waits for the target thread to become idle, starts the continuation, and only that continuation can provide final callable proof by calling the changed MCP tool.';
 
 const appServerUrlSchema = z
   .string()
@@ -480,7 +480,7 @@ export async function runMcpRefreshOperation(
 
     return store.complete(input.operationId, {
       evidence,
-      nextAction: 'MCP reload requested and continuation turn started. Final proof still requires the fresh turn to call the changed tool.',
+      nextAction: 'Continuation turn started. Final proof still requires that fresh turn to call the changed MCP tool; App Server status or direct SDK calls are diagnostic only.',
     });
   } catch (error) {
     return store.fail(input.operationId, {

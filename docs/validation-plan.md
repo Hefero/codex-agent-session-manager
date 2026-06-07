@@ -16,6 +16,7 @@ npm run remote -- --dry-run --no-resume
 node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
 node --import tsx src/cli.ts --help
 node --import tsx src/cli.ts mcp --help
+node --import tsx src/cli.ts mcp add npm @modelcontextprotocol/server-everything --dry-run
 node --import tsx src/cli.ts app-server start --dry-run --port 4566
 node --import tsx src/cli.ts session launch --dry-run --url ws://127.0.0.1:4566 --thread-id <thread-id>
 npm run pack:dry-run
@@ -33,6 +34,7 @@ The smoke must prove:
   - `codex_thread_context`
   - `codex_operation_read`
   - `codex_operation_wait`
+  - `codex_mcp_add_npm`
   - `codex_mcp_reload`
   - `codex_mcp_refresh`
   - `codex_app_server_start`
@@ -46,6 +48,8 @@ The smoke must prove:
 - `resources/list` includes `codex-session-manager://operations`.
 - CLI help lists the public App Server, MCP refresh, and session commands.
 - CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
+- CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
+  writing files.
 - CLI App Server start dry-run emits JSON with `dryRun:true` and the requested
   loopback URL.
 - CLI init dry-run emits human-readable output for a temporary workspace
@@ -115,6 +119,8 @@ Current checks:
   and does not close remote TUI windows or alter user global MCP config.
 - expose public CLI commands for App Server lifecycle, MCP refresh, and session
   launch/close/replace over the same guarded operation builders used by MCP.
+- expose an agent-facing npm MCP installer that writes project-scoped
+  `.codex/config.toml` blocks without editing user global Codex config.
 - keep public CLI operation output JSON by default and preserve
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.
@@ -122,6 +128,8 @@ Current checks:
   runtime ignore rules, optional `AGENTS.md`, and package scripts when
   `package.json` already exists.
 - keep init idempotent and avoid editing user global Codex config.
+- keep direct MCP SDK calls classified as diagnostic only; final proof remains
+  a model-callable MCP tool call from the continuation/replacement boundary.
 - package only the intended npm artifact files: `dist/`, `scripts/*.cs`,
   `README.md`, `LICENSE`, and package metadata.
 - reject package inclusion of source, tests, docs, `.codex*` runtime config,

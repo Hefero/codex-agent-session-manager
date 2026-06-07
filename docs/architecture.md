@@ -102,6 +102,7 @@ The current MCP surface exposes:
 - `codex_thread_context`
 - `codex_operation_read`
 - `codex_operation_wait`
+- `codex_mcp_add_npm`
 - `codex_mcp_reload`
 - `codex_mcp_refresh`
 - `codex_app_server_start`
@@ -164,6 +165,17 @@ Phase 4 composition adds the default refresh workflow:
 - The operation is proof scheduling, not final proof. Final proof still
   requires the started continuation turn to call the changed model-callable
   tool.
+
+Phase 10 package bootstrap adds an agent-facing npm MCP installer:
+
+- `codex_mcp_add_npm` installs an npm MCP package into the current project and
+  writes a marked project-scoped `.codex/config.toml` block.
+- The generated server command uses `node` plus the installed package
+  entrypoint instead of npm command shims.
+- Existing unmanaged `[mcp_servers.<name>]` sections are not overwritten.
+- This is setup only. Final callable proof still requires `codex_mcp_refresh`
+  followed by a real tool call from the continuation turn; direct MCP SDK calls
+  are diagnostic only.
 
 Phase 5 starts with safe remote TUI cleanup:
 

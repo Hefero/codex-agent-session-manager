@@ -81,6 +81,7 @@ try {
     'codex_thread_context',
     'codex_operation_read',
     'codex_operation_wait',
+    'codex_mcp_add_npm',
     'codex_mcp_reload',
     'codex_mcp_refresh',
     'codex_app_server_start',
@@ -184,6 +185,7 @@ try {
   });
   if (
     cliMcpHelp.status !== 0
+    || !cliMcpHelp.stdout.includes('codex-agent-session-manager mcp add npm <package-spec>')
     || !cliMcpHelp.stdout.includes('codex-agent-session-manager mcp refresh --thread-id <thread-id>')
   ) {
     throw new Error(`Unexpected CLI mcp help result: stdout=${cliMcpHelp.stdout} stderr=${cliMcpHelp.stderr}`);
@@ -199,6 +201,23 @@ try {
   );
   if (cliStart.status !== 0 || !cliStart.stdout.includes('"dryRun": true') || !cliStart.stdout.includes('ws://127.0.0.1:4566')) {
     throw new Error(`Unexpected CLI app-server start result: stdout=${cliStart.stdout} stderr=${cliStart.stderr}`);
+  }
+
+  const cliMcpAdd = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', cliEntry, 'mcp', 'add', 'npm', '@modelcontextprotocol/server-everything', '--dry-run'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+  if (
+    cliMcpAdd.status !== 0
+    || !cliMcpAdd.stdout.includes('"dryRun": true')
+    || !cliMcpAdd.stdout.includes('"serverName": "everything"')
+    || !cliMcpAdd.stdout.includes('codex_mcp_refresh')
+  ) {
+    throw new Error(`Unexpected CLI mcp add npm dry-run result: stdout=${cliMcpAdd.stdout} stderr=${cliMcpAdd.stderr}`);
   }
 
   const initWorkspace = mkdtempSync(join(tmpdir(), 'codex-agent-session-manager-init-smoke-'));

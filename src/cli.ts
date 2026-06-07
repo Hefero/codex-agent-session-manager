@@ -21,7 +21,7 @@ Usage:
   codex-agent-session-manager init [options]
   codex-agent-session-manager remote [options]
   codex-agent-session-manager app-server <start|status|stop> [options]
-  codex-agent-session-manager mcp refresh [options]
+  codex-agent-session-manager mcp <add|refresh> [options]
   codex-agent-session-manager session <launch|close|replace> [options]
   codex-agent-session-manager --version
   codex-agent-session-manager --help
@@ -31,7 +31,7 @@ Commands:
   init        Initialize a project-scoped Codex session manager setup.
   remote      Start/reuse a workspace App Server and launch Codex remote.
   app-server  Manage the workspace-owned App Server lifecycle.
-  mcp         Reload MCP servers and start a continuation turn.
+  mcp         Add npm MCP servers, reload MCPs, and start continuation turns.
   session     Launch, close, or replace Codex remote TUI sessions.
 
 ${publicCliUsage()}

@@ -62,6 +62,32 @@ test('parsePublicCommand maps mcp refresh with repeated highlight tools', () => 
   );
 });
 
+test('parsePublicCommand maps mcp add npm', () => {
+  assert.deepEqual(
+    parsePublicCommand([
+      'mcp',
+      'add',
+      'npm',
+      '@modelcontextprotocol/server-everything',
+      '--server-name',
+      'everything',
+      '--arg',
+      'stdio',
+      '--dry-run',
+    ]),
+    {
+      command: 'mcp',
+      subcommand: 'add-npm',
+      input: {
+        packageSpec: '@modelcontextprotocol/server-everything',
+        serverName: 'everything',
+        extraArgs: ['stdio'],
+        dryRun: true,
+      },
+    },
+  );
+});
+
 test('parsePublicCommand maps session commands', () => {
   assert.deepEqual(parsePublicCommand(['session', 'launch', '--thread-id', 'thread-a', '--confirm', '--bypass-sandbox']), {
     command: 'session',

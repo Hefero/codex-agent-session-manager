@@ -23,6 +23,7 @@ import {
   operationWaitInputSchema,
 } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
+import { buildMcpAddNpmPayload, mcpAddNpmInputSchema } from './tools/mcp-add-npm.js';
 import { buildMcpRefreshPayload, mcpRefreshInputSchema } from './tools/mcp-refresh.js';
 import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
 import { buildSessionClosePayload, sessionCloseInputSchema } from './tools/session-close.js';
@@ -201,6 +202,28 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = await buildOperationWaitPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_mcp_add_npm',
+    {
+      title: 'Add npm MCP Server',
+      description: 'Install an npm MCP package locally and register a project-scoped .codex/config.toml server block. Callable proof still requires codex_mcp_refresh and a real tool call from the continuation.',
+      inputSchema: mcpAddNpmInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      const payload = buildMcpAddNpmPayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

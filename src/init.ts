@@ -225,10 +225,12 @@ Useful commands:
 - \`npm run codex:init:dry-run\`
 - \`npm run codex:remote\`
 - \`npm run codex:remote:dry-run\`
+- \`${packageName} mcp add npm <package-spec>\`
 - \`${packageName} mcp refresh --thread-id <thread-id>\`
 
 Treat App Server MCP status as diagnostic. Validate MCP changes with a real
-tool call from the continuation or replacement turn.
+tool call from the continuation or replacement turn. Direct MCP SDK calls are
+diagnostic only; they do not prove the model-callable catalog refreshed.
 ${AGENTS_MARKER_END}`;
 }
 

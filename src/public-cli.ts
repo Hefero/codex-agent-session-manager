@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { buildAppServerStatusPayload, buildAppServerStopPayload } from './tools/app-server-lifecycle.js';
 import { buildAppServerStartPayload } from './tools/app-server-start.js';
+import { buildMcpAddNpmPayload } from './tools/mcp-add-npm.js';
 import { buildMcpRefreshPayload } from './tools/mcp-refresh.js';
 import { buildSessionClosePayload } from './tools/session-close.js';
 import { buildSessionLaunchPayload } from './tools/session-launch.js';
@@ -41,6 +42,7 @@ function usage(): string {
   codex-agent-session-manager app-server start [options]
   codex-agent-session-manager app-server status [options]
   codex-agent-session-manager app-server stop [options]
+  codex-agent-session-manager mcp add npm <package-spec> [options]
   codex-agent-session-manager mcp refresh --thread-id <thread-id> [options]
   codex-agent-session-manager session launch [options]
   codex-agent-session-manager session close --thread-id <thread-id> [options]
@@ -61,6 +63,8 @@ App Server:
   stop:   --delay-ms <ms>
 
 MCP:
+  add npm: --server-name <name> --entrypoint <package-relative-js>
+           --arg <value> --dry-run
   refresh: --highlight-tool <name> --continuation-timeout-ms <ms>
            --continuation-poll-ms <ms> --continuation-stable-ms <ms>
 
@@ -194,7 +198,19 @@ function appServerCommand(subcommand: string, flags: Map<string, string[]>): Par
   throw new Error(`Unknown app-server subcommand: ${subcommand}`);
 }
 
-function mcpCommand(subcommand: string, flags: Map<string, string[]>): ParsedPublicCommand {
+function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
+  if (subcommand === 'add') {
+    const [provider, packageSpec] = rest;
+    if (provider !== 'npm') throw new Error(`Unknown mcp add provider: ${provider ?? '<missing>'}`);
+    if (packageSpec === undefined || packageSpec.length === 0) throw new Error('mcp add npm requires a package spec.');
+    const input: Record<string, unknown> = { packageSpec };
+    addOptional(input, 'serverName', stringFlag(flags, 'server-name'));
+    addOptional(input, 'entrypoint', stringFlag(flags, 'entrypoint'));
+    addOptional(input, 'extraArgs', stringListFlag(flags, 'arg'));
+    if (hasFlag(flags, 'dry-run')) input.dryRun = true;
+    return { command: 'mcp', subcommand: 'add-npm', input };
+  }
+
   if (subcommand !== 'refresh') throw new Error(`Unknown mcp subcommand: ${subcommand}`);
   const input: Record<string, unknown> = {
     threadId: requireString(flags, 'thread-id'),
@@ -258,7 +274,7 @@ function sessionCommand(subcommand: string, flags: Map<string, string[]>): Parse
 
 export function parsePublicCommand(argv: readonly string[]): ParsedPublicCommand | { help: true; text: string } {
   const parsed = parseArgs(argv);
-  const [command, subcommand] = parsed.positionals;
+  const [command, subcommand, ...rest] = parsed.positionals;
   if (
     command === undefined
     || command === 'help'
@@ -270,7 +286,7 @@ export function parsePublicCommand(argv: readonly string[]): ParsedPublicCommand
   if (subcommand === undefined) throw new Error(`${command} requires a subcommand.`);
 
   if (command === 'app-server') return appServerCommand(subcommand, parsed.flags);
-  if (command === 'mcp') return mcpCommand(subcommand, parsed.flags);
+  if (command === 'mcp') return mcpCommand(subcommand, parsed.flags, rest);
   if (command === 'session') return sessionCommand(subcommand, parsed.flags);
   throw new Error(`Unknown public command: ${command}`);
 }
@@ -287,6 +303,9 @@ async function payloadFor(command: ParsedPublicCommand): Promise<Record<string, 
   }
   if (command.command === 'mcp' && command.subcommand === 'refresh') {
     return buildMcpRefreshPayload(command.input as Parameters<typeof buildMcpRefreshPayload>[0]);
+  }
+  if (command.command === 'mcp' && command.subcommand === 'add-npm') {
+    return buildMcpAddNpmPayload(command.input as Parameters<typeof buildMcpAddNpmPayload>[0]);
   }
   if (command.command === 'session' && command.subcommand === 'launch') {
     return buildSessionLaunchPayload(command.input as Parameters<typeof buildSessionLaunchPayload>[0]);

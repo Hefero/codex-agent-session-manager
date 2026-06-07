@@ -95,6 +95,8 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     const agents = readFileSync(join(workspace, 'AGENTS.md'), 'utf8');
     assert.match(agents, /codex-agent-session-manager:start/u);
     assert.match(agents, /MCP callable-catalog validation/u);
+    assert.match(agents, /mcp add npm <package-spec>/u);
+    assert.match(agents, /Direct MCP SDK calls are\s+diagnostic only/u);
 
     const second = buildInitPlan({ workspace });
     assert.equal(second.fileUpdates.length, 0);

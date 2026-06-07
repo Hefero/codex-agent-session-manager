@@ -161,6 +161,10 @@ try {
   writeFileSync(join(targetWorkspace, 'package.json'), `${JSON.stringify({ name: 'pack-smoke-target' }, null, 2)}\n`);
 
   const pack = parsePackJson(runNpm(['pack', '--pack-destination', packDir, '--json'], repoRoot).stdout);
+  const sourcePackageJson = readJson(join(repoRoot, 'package.json'));
+  const expectedVersion = sourcePackageJson.version;
+  if (typeof expectedVersion !== 'string') throw new Error('package.json version must be a string.');
+
   const files = new Set((pack.files ?? []).map((file) => normalizePackPath(file.path ?? '')).filter(Boolean));
   assertIncludes(files, 'package.json');
   assertIncludes(files, 'README.md');
@@ -178,7 +182,10 @@ try {
   runNpm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', tarballPath], targetWorkspace);
 
   const installedCli = join(targetWorkspace, 'node_modules', packageName, 'dist', 'cli.js');
-  run(process.execPath, [installedCli, '--version'], targetWorkspace);
+  const installedVersion = run(process.execPath, [installedCli, '--version'], targetWorkspace).stdout.trim();
+  if (installedVersion !== expectedVersion) {
+    throw new Error(`Expected installed CLI version ${expectedVersion}, got ${installedVersion}.`);
+  }
   run(process.execPath, [installedCli, 'init', '--dry-run', '--workspace', targetWorkspace], targetWorkspace);
   run(process.execPath, [installedCli, 'init', '--workspace', targetWorkspace], targetWorkspace);
   run(process.execPath, [installedCli, 'init', '--dry-run', '--workspace', targetWorkspace], targetWorkspace);

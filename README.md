@@ -2,10 +2,8 @@
 
 Agent-facing Codex App Server session manager with an MCP validation harness.
 
-This repository is a clean extraction from the `codex-mcp-hot-reloader`
-research and validation work. The goal is to expose selected Codex App Server
-session operations as safe MCP tools that a Codex agent can call from inside its
-own workflow.
+The goal is to expose selected Codex App Server session operations as safe MCP
+tools that a Codex agent can call from inside its own workflow.
 
 Early scope:
 
@@ -18,6 +16,23 @@ Early scope:
 
 The project is intentionally starting from the session-management architecture,
 not from a generic App Server SDK or a human session browser.
+
+## Install
+
+Install per project:
+
+```powershell
+npm install -D codex-agent-session-manager
+npx codex-agent-session-manager init
+npm run codex:remote
+```
+
+`init` is project-scoped. It updates `.codex/config.toml` with the
+`codex_agent_session_manager` MCP server, adds `.codex-agent-session-manager/`
+to `.gitignore`, adds `codex:init`, `codex:init:dry-run`, remote, and App
+Server package scripts when `package.json` exists, and creates or updates a
+small `AGENTS.md` block unless `--no-agents` is passed. It does not edit the
+user's global Codex config.
 
 ## Current Surface
 
@@ -50,10 +65,36 @@ MCP status from App Server is treated as diagnostic only. Callable-catalog proof
 requires a real model-callable tool invocation from the correct continuation or
 replacement boundary.
 
-For the common “MCP changed, refresh and continue” path, use
+For the common "MCP changed, refresh and continue" path, use
 `codex_mcp_refresh`: it reloads MCP servers, records before/after status
 evidence, waits for the target thread to become idle, and starts the
 continuation turn. The continuation must still perform the actual proof call.
+
+## Public CLI
+
+The package also exposes a public CLI for operator workflows. It is a thin
+wrapper over the same guarded operation builders used by the MCP tools; it does
+not expose raw arbitrary App Server JSON-RPC.
+
+```powershell
+codex-agent-session-manager init --dry-run
+codex-agent-session-manager init
+
+codex-agent-session-manager app-server start --dry-run --port auto
+codex-agent-session-manager app-server status --no-probe-ready
+codex-agent-session-manager app-server stop --dry-run
+
+codex-agent-session-manager mcp refresh --thread-id <thread-id>
+
+codex-agent-session-manager session launch --thread-id <thread-id> --dry-run
+codex-agent-session-manager session close --thread-id <thread-id> --dry-run
+codex-agent-session-manager session replace --thread-id <thread-id> --dry-run
+```
+
+CLI output is JSON by default. Operations that are destructive or launch real
+processes default to dry-run and require `--confirm` for real execution.
+Continuation and replacement prompts are operator text; prefer `--prompt-file`
+when avoiding prompt text in shell history.
 
 ## Development
 
@@ -67,6 +108,9 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
+node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+npm run pack:dry-run
+npm run pack:smoke
 ```
 
 Start the MCP server:

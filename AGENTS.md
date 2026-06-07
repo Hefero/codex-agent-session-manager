@@ -1,7 +1,7 @@
 # Codex Agent Session Manager
 
-This repo is the clean TypeScript extraction from the
-`codex-mcp-hot-reloader` research work.
+This repo exposes selected Codex App Server session operations as safe MCP
+tools for Codex agents.
 
 ## Operating Rules
 
@@ -19,6 +19,8 @@ This repo is the clean TypeScript extraction from the
    real model-callable tool invocation from the correct turn/session boundary.
 7. Keep the implementation TypeScript-first: Zod schemas, typed handlers,
    structured results, and focused smokes.
+8. `init` is project-scoped. It must not edit user global Codex config, and
+   `AGENTS.md` updates must remain opt-out through `--no-agents`.
 
 ## Required Local Checks
 
@@ -33,6 +35,11 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
+node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts --help
+node --import tsx src/cli.ts app-server start --dry-run --port 4566
+npm run pack:dry-run
+npm run pack:smoke
 ```
 
 ## Documentation Map

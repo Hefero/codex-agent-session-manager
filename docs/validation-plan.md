@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: Phase 7 lifecycle and MCP refresh workflow implemented
+Status: Phase 10 package/install hardening implemented
 
 ## Scaffold Checks
 
@@ -13,6 +13,13 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
+node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts --help
+node --import tsx src/cli.ts mcp --help
+node --import tsx src/cli.ts app-server start --dry-run --port 4566
+node --import tsx src/cli.ts session launch --dry-run --url ws://127.0.0.1:4566 --thread-id <thread-id>
+npm run pack:dry-run
+npm run pack:smoke
 ```
 
 The smoke must prove:
@@ -37,6 +44,11 @@ The smoke must prove:
   - `codex_session_replace`
 - `tools/call` can call `codex_session_manager_probe`.
 - `resources/list` includes `codex-session-manager://operations`.
+- CLI help lists the public App Server, MCP refresh, and session commands.
+- CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
+- CLI App Server start dry-run emits JSON with `dryRun:true` and the requested
+  loopback URL.
+- CLI init dry-run emits JSON for a temporary workspace without writing files.
 
 ## App Server And Session Checks
 
@@ -100,6 +112,21 @@ Current checks:
   the owned workspace App Server process tree.
 - verify App Server stop marks primary launcher state as `stopped`/`owned:false`
   and does not close remote TUI windows or alter user global MCP config.
+- expose public CLI commands for App Server lifecycle, MCP refresh, and session
+  launch/close/replace over the same guarded operation builders used by MCP.
+- keep public CLI output JSON by default and preserve dry-run/confirm semantics
+  for process-launching or destructive operations.
+- initialize target projects through project-scoped `.codex/config.toml`, local
+  runtime ignore rules, optional `AGENTS.md`, and package scripts when
+  `package.json` already exists.
+- keep init idempotent and avoid editing user global Codex config.
+- package only the intended npm artifact files: `dist/`, `scripts/*.cs`,
+  `README.md`, `LICENSE`, and package metadata.
+- reject package inclusion of source, tests, docs, `.codex*` runtime config,
+  and `.exe` runtime binaries.
+- install the generated `.tgz` in a temporary target project, run installed
+  `dist/cli.js`, run project `init`, validate generated files/scripts, and run
+  installed `npm run codex:remote:dry-run`.
 
 ## Windows Popup Probe
 

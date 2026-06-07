@@ -4,8 +4,8 @@ Date: 2026-06-07
 
 ## Goal
 
-Continue building `codex-agent-session-manager` as the clean TypeScript
-successor to `codex-mcp-hot-reloader`.
+Continue building `codex-agent-session-manager` as an agent-facing Codex App
+Server session manager plus MCP validation harness.
 
 The old repo is frozen as a reference. Work in this repo:
 
@@ -15,10 +15,8 @@ The old repo is frozen as a reference. Work in this repo:
 
 ## Current State
 
-Phases 1, 2, 3, and 4 are implemented and validated. Phase 5 now has
-`codex_session_close`, `codex_session_launch`, and `codex_session_replace`
-implemented with fresh-turn callable proof. Check `git log` and `git status`
-for the latest commit state.
+Phases 1 through 10 are implemented and validated locally. Check `git log` and
+`git status` for the latest commit state.
 
 Implemented:
 
@@ -35,9 +33,14 @@ Implemented:
 - Reload tool `codex_mcp_reload`.
 - Refresh workflow tool `codex_mcp_refresh`.
 - Continuation tool `codex_session_continue`.
+- App Server lifecycle tools `codex_app_server_start`,
+  `codex_app_server_status`, and `codex_app_server_stop`.
 - Remote TUI cleanup tool `codex_session_close`.
 - Remote TUI launch tool `codex_session_launch`.
 - Remote TUI replacement tool `codex_session_replace`.
+- Public CLI surface:
+  `init`, `app-server start|status|stop`, `mcp refresh`, and
+  `session launch|close|replace`.
 - Resource `codex-session-manager://operations`.
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
@@ -45,6 +48,7 @@ Implemented:
 - Repo-local remote launcher through `npm run remote`; it uses primary
   `.codex-agent-session-manager` state and ignores legacy hot-reloader state.
 - Security scripts `security:smoke`, `security:scan`, and `audit:prod`.
+- Package hardening scripts `pack:dry-run` and `pack:smoke`.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
 - Initial docs and ADRs.
@@ -75,6 +79,12 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
+node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts --help
+node --import tsx src/cli.ts mcp --help
+node --import tsx src/cli.ts app-server start --dry-run --port 4566
+npm run pack:dry-run
+npm run pack:smoke
 git diff --check
 ```
 
@@ -347,6 +357,76 @@ completed with `statusBefore`, `statusAfter`, `ready`, and `turnStart`
 evidence. The continuation turn called `codex_session_manager_probe` and
 replied `MCP_REFRESH_CHILD_PROOF_DONE`.
 
+## Latest Phase 8 Public CLI Evidence
+
+Public CLI commands are promoted as operator-facing wrappers over the same
+guarded payload builders used by MCP tools:
+
+```text
+codex-agent-session-manager app-server start|status|stop
+codex-agent-session-manager mcp refresh
+codex-agent-session-manager session launch|close|replace
+```
+
+Validation covers:
+
+```text
+parsePublicCommand: app-server, mcp refresh, session launch/close/replace
+runPublicCommand: app-server start dry-run JSON
+smoke: top-level help, mcp --help dispatch, app-server start dry-run
+```
+
+The `mcp` command now routes to the public CLI when a subcommand or help flag is
+present; `serve` remains the explicit stdio-server command.
+
+## Latest Phase 9 Init Evidence
+
+Project init is promoted:
+
+```text
+codex-agent-session-manager init --dry-run
+codex-agent-session-manager init
+```
+
+Implemented behavior:
+
+```text
+project-scoped .codex/config.toml: codex_agent_session_manager
+.gitignore: .codex-agent-session-manager/
+package.json: scripts and devDependency when package.json exists
+AGENTS.md: small managed block by default, skipped by --no-agents
+global Codex config: untouched
+```
+
+Validation covers parsing, redacted dry-run output, no-write dry-run,
+application to a target project, idempotency, missing package.json, and
+`--no-agents`. The smoke runs `init --dry-run` against a temporary workspace.
+
+## Latest Phase 10 Package Evidence
+
+Package/install hardening is promoted:
+
+```text
+npm run pack:dry-run
+npm run pack:smoke
+```
+
+Pack smoke behavior:
+
+```text
+creates npm tarball in a temporary directory
+validates package includes dist, README, LICENSE, package metadata, launcher .cs
+rejects source, tests, docs, .codex runtime state, and .exe binaries
+installs the .tgz into a temporary target project
+runs installed dist/cli.js
+runs init --dry-run and init from the installed package
+validates generated config, gitignore, scripts, and AGENTS.md
+runs npm run codex:remote:dry-run in the target project
+```
+
+Automated smoke intentionally stops at remote dry-run. Real TUI launch remains
+an operator-visible manual probe.
+
 ## Bootstrap Rule
 
 Lifecycle, Windows launcher, and refresh workflow probes are now promoted, but
@@ -360,11 +440,11 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. Review and commit the promoted lifecycle/refresh changes when the controller
-   approves.
-3. Decide the next phase: public CLI lifecycle commands, project init/bootstrap,
-   or package/release hardening.
-4. Keep all future session-manager tools small, typed, and explicitly guarded.
+2. Prepare the next release boundary: optional real remote probe from an
+   installed package, version choice, commit, push, and publish decision.
+3. Keep all future session-manager tools small, typed, and explicitly guarded.
+4. Continue treating App Server MCP status as diagnostic, not final callable
+   proof.
 
 ## Do Not Do
 

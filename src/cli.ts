@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { startStdioServer } from './mcp-server.js';
+import { initUsage, runInitCommand } from './init.js';
+import { publicCliUsage, runPublicCommand } from './public-cli.js';
 import { remoteUsage, runRemoteCommand } from './remote.js';
 import { runAppServerStopOperationFromArgv } from './tools/app-server-lifecycle.js';
 import { runAppServerStartOperationFromArgv } from './tools/app-server-start.js';
@@ -16,13 +18,24 @@ function printHelp(): void {
 
 Usage:
   codex-agent-session-manager serve
+  codex-agent-session-manager init [options]
   codex-agent-session-manager remote [options]
+  codex-agent-session-manager app-server <start|status|stop> [options]
+  codex-agent-session-manager mcp refresh [options]
+  codex-agent-session-manager session <launch|close|replace> [options]
   codex-agent-session-manager --version
   codex-agent-session-manager --help
 
 Commands:
-  serve    Start the MCP stdio server.
-  remote   Start/reuse a workspace App Server and launch Codex remote.
+  serve       Start the MCP stdio server.
+  init        Initialize a project-scoped Codex session manager setup.
+  remote      Start/reuse a workspace App Server and launch Codex remote.
+  app-server  Manage the workspace-owned App Server lifecycle.
+  mcp         Reload MCP servers and start a continuation turn.
+  session     Launch, close, or replace Codex remote TUI sessions.
+
+${publicCliUsage()}
+${initUsage()}
 `);
 }
 
@@ -39,7 +52,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  if (command === 'serve' || command === 'mcp') {
+  if (command === 'serve' || (command === 'mcp' && argv.length === 1)) {
     await startStdioServer();
     return;
   }
@@ -49,8 +62,18 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === 'init') {
+    process.exitCode = await runInitCommand(argv.slice(1));
+    return;
+  }
+
   if (command === 'remote-help') {
     process.stdout.write(remoteUsage());
+    return;
+  }
+
+  if (command === 'app-server' || command === 'mcp' || command === 'session') {
+    process.exitCode = await runPublicCommand(argv);
     return;
   }
 
@@ -99,4 +122,8 @@ async function main(argv: string[]): Promise<void> {
   process.exitCode = 2;
 }
 
-await main(process.argv.slice(2));
+await main(process.argv.slice(2)).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`${message}\n`);
+  process.exitCode = 2;
+});

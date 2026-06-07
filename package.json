@@ -26,6 +26,8 @@
     "security:scan": "node --import tsx scripts/security-scan.ts",
     "security:smoke": "node --import tsx scripts/smoke-security-scan.ts",
     "audit:prod": "npm audit --omit=dev",
+    "pack:dry-run": "npm run build && npm pack --dry-run",
+    "pack:smoke": "npm run build && node --import tsx scripts/pack-smoke.ts",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {

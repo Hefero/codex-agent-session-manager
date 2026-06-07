@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 7 lifecycle and MCP refresh workflow implemented
+Status: Phase 10 package/install hardening implemented
 
 ## Bootstrap Workflow
 
@@ -419,3 +419,116 @@ Validation:
   `remote --no-resume --port auto`, ran the App Server stop operation against
   that workspace, and observed operation `completed`, state `stopped`,
   `owned:false`, and no remaining process for the managed App Server root.
+
+## Phase 8: Public CLI Surface
+
+- Expose a stable operator CLI for the App Server/session operations already
+  proven through MCP tools.
+- Keep the CLI as a thin wrapper over the same typed payload builders and
+  guardrails, not a separate App Server client architecture.
+- Make common lifecycle and refresh workflows usable without asking an agent to
+  call internal `run-*` child commands directly.
+
+Status: first public CLI surface implemented.
+
+Implemented:
+
+- `codex-agent-session-manager app-server start|status|stop`.
+- `codex-agent-session-manager mcp refresh`.
+- `codex-agent-session-manager session launch|close|replace`.
+- JSON output by default for operator parsing and future automation.
+- `--confirm` switches guarded dry-run operations into real execution by
+  setting `dryRun:false`; `--dry-run` remains explicit preview mode.
+- `--prompt-file` is available for refresh, launch, and replace prompts when
+  shell history should not contain prompt text.
+- Top-level help now advertises the public CLI commands.
+- The `mcp` command dispatches to the public CLI when a subcommand or help flag
+  is present, while `serve` remains the explicit stdio-server command.
+
+Validation:
+
+- Unit tests cover public CLI parsing for App Server lifecycle, MCP refresh,
+  session launch, session close, and session replace.
+- Unit tests cover JSON output for an App Server start dry-run and required
+  `--thread-id` validation.
+- `npm run smoke` covers top-level CLI help, `mcp --help` routing, and
+  `app-server start --dry-run --port 4566`.
+- Manual dry-runs covered:
+  - `node --import tsx src/cli.ts --help`
+  - `node --import tsx src/cli.ts app-server start --dry-run --port 4566`
+  - `node --import tsx src/cli.ts session launch --dry-run --url ws://127.0.0.1:4566 --thread-id thread-a`
+
+## Phase 9: Project Init And Bootstrap
+
+- Let an operator prepare a target project with one command.
+- Keep initialization project-scoped and idempotent.
+- Avoid touching `~/.codex/config.toml` or rewriting user global MCP servers.
+- Make the default helpful for agents while allowing `AGENTS.md` opt-out.
+
+Status: first project init command implemented.
+
+Implemented:
+
+- `codex-agent-session-manager init`.
+- `--dry-run`, `--workspace <path>`, and `--no-agents`.
+- JSON output by default with redacted workspace paths.
+- Project-scoped `.codex/config.toml` registration for
+  `codex_agent_session_manager`.
+- `.gitignore` entry for `.codex-agent-session-manager/` runtime state.
+- `package.json` updates only when the file already exists:
+  - `devDependencies.codex-agent-session-manager`
+  - `codex:init`
+  - `codex:init:dry-run`
+  - `codex:remote`
+  - `codex:remote:dry-run`
+  - `codex:app-server:status`
+  - `codex:app-server:stop`
+- Small managed `AGENTS.md` block by default, skipped with `--no-agents`.
+- Windows hidden App Server launcher preparation uses the same launcher helper
+  as `remote` and remains scoped to local runtime state.
+
+Validation:
+
+- Unit tests cover argument parsing, redacted dry-run output, no-write dry-run,
+  target project application, idempotency, missing `package.json`, and
+  `--no-agents`.
+- `npm run smoke` runs `init --dry-run` against a temporary workspace.
+- The command does not edit user global Codex config.
+
+## Phase 10: Package And Install Hardening
+
+- Prove the package works outside the source repo.
+- Keep the npm package small: published files are `dist/`, `scripts/*.cs`,
+  `README.md`, `LICENSE`, and npm's required `package.json`.
+- Validate target-project install and init through the generated `.tgz`.
+- Keep automated install smoke dry-run for remote launch; real TUI launch stays
+  a manual probe.
+
+Status: first package/install smoke implemented.
+
+Implemented:
+
+- `npm run pack:dry-run`.
+- `npm run pack:smoke`.
+- `scripts/pack-smoke.ts` builds a tarball in a temporary directory, validates
+  package contents, installs it into a temporary target project, runs installed
+  `dist/cli.js`, runs `init --dry-run`, runs real `init`, validates generated
+  files, and runs `npm run codex:remote:dry-run`.
+- Package content validation requires:
+  - `package.json`
+  - `README.md`
+  - `LICENSE`
+  - `dist/cli.js`
+  - `scripts/windows-hidden-stdio-launcher.cs`
+- Package content validation rejects source/test/docs files, `.codex*`
+  runtime config, and `.exe` runtime binaries.
+- README install path recommends local devDependency install:
+  `npm install -D codex-agent-session-manager`.
+
+Validation:
+
+- `npm run pack:dry-run`
+- `npm run pack:smoke`
+- Pack smoke proves installed CLI version, project init, generated scripts,
+  project-scoped MCP config, runtime ignore rule, managed `AGENTS.md` block,
+  and installed `codex:remote:dry-run`.

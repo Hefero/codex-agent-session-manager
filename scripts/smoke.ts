@@ -1,5 +1,7 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -12,10 +14,11 @@ interface JsonRpcResponse {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(here);
+const cliEntry = join(repoRoot, 'src', 'cli.ts');
 
 const child = spawn(
   process.execPath,
-  ['--import', 'tsx', join(repoRoot, 'src', 'cli.ts'), 'serve'],
+  ['--import', 'tsx', cliEntry, 'serve'],
   {
     cwd: repoRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -160,6 +163,63 @@ try {
     (resources.result as { resources?: Array<{ uri?: string }> }).resources?.map((resource) => resource.uri) ?? [];
   if (!resourceUris.includes('codex-session-manager://operations')) {
     throw new Error(`Operations resource missing. Saw: ${resourceUris.join(', ')}`);
+  }
+
+  const cliHelp = spawnSync(process.execPath, ['--import', 'tsx', cliEntry, '--help'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  if (
+    cliHelp.status !== 0
+    || !cliHelp.stdout.includes('codex-agent-session-manager init [options]')
+    || !cliHelp.stdout.includes('codex-agent-session-manager app-server <start|status|stop>')
+  ) {
+    throw new Error(`Unexpected CLI help result: stdout=${cliHelp.stdout} stderr=${cliHelp.stderr}`);
+  }
+
+  const cliMcpHelp = spawnSync(process.execPath, ['--import', 'tsx', cliEntry, 'mcp', '--help'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    timeout: 5_000,
+  });
+  if (
+    cliMcpHelp.status !== 0
+    || !cliMcpHelp.stdout.includes('codex-agent-session-manager mcp refresh --thread-id <thread-id>')
+  ) {
+    throw new Error(`Unexpected CLI mcp help result: stdout=${cliMcpHelp.stdout} stderr=${cliMcpHelp.stderr}`);
+  }
+
+  const cliStart = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', cliEntry, 'app-server', 'start', '--dry-run', '--port', '4566'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+  if (cliStart.status !== 0 || !cliStart.stdout.includes('"dryRun": true') || !cliStart.stdout.includes('ws://127.0.0.1:4566')) {
+    throw new Error(`Unexpected CLI app-server start result: stdout=${cliStart.stdout} stderr=${cliStart.stderr}`);
+  }
+
+  const initWorkspace = mkdtempSync(join(tmpdir(), 'codex-agent-session-manager-init-smoke-'));
+  try {
+    const cliInit = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', cliEntry, 'init', '--dry-run', '--workspace', initWorkspace],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      },
+    );
+    if (
+      cliInit.status !== 0
+      || !cliInit.stdout.includes('"dryRun": true')
+      || !cliInit.stdout.includes('"mcpServerName": "codex_agent_session_manager"')
+    ) {
+      throw new Error(`Unexpected CLI init dry-run result: stdout=${cliInit.stdout} stderr=${cliInit.stderr}`);
+    }
+  } finally {
+    rmSync(initWorkspace, { recursive: true, force: true });
   }
 
   process.stdout.write('smoke ok\n');

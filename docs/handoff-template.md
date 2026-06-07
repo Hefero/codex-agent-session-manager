@@ -8,12 +8,11 @@ Continue building codex-agent-session-manager in
 <workspace>.
 
 Context:
-- This is the clean TypeScript extraction from codex-mcp-hot-reloader.
-- The old repo is frozen; do not keep editing it except as a reference.
 - The project goal is an agent-facing Codex App Server session manager plus MCP
   validation harness.
 - The target direction is:
   Codex agent -> MCP tool -> Codex App Server -> Codex thread/session runtime.
+- The old hot-reloader repo is frozen as historical reference only.
 
 Current foundation:
 - TypeScript ESM package.
@@ -24,6 +23,9 @@ Current foundation:
 - Thread context tool: codex_thread_context.
 - Operation tools: codex_operation_read and codex_operation_wait.
 - Reload tool: codex_mcp_reload.
+- Refresh workflow tool: codex_mcp_refresh.
+- App Server lifecycle tools: codex_app_server_start,
+  codex_app_server_status, and codex_app_server_stop.
 - Continuation tool: codex_session_continue.
 - Remote TUI cleanup tool: codex_session_close.
 - Remote TUI launch tool: codex_session_launch.
@@ -33,6 +35,15 @@ Current foundation:
 - Workspace cwd guardrails reject lexical and symlink/junction escapes.
 - Repo-local remote launcher: npm run remote. It uses primary
   .codex-agent-session-manager state and ignores legacy hot-reloader state.
+- Public CLI:
+  codex-agent-session-manager init,
+  codex-agent-session-manager app-server start|status|stop,
+  codex-agent-session-manager mcp refresh, and
+  codex-agent-session-manager session launch|close|replace.
+- Project init writes project-scoped `.codex/config.toml`, local runtime ignore
+  rules, package scripts when `package.json` exists, and an `AGENTS.md` block
+  unless `--no-agents` is used.
+- Package hardening scripts: npm run pack:dry-run and npm run pack:smoke.
 - Security scripts: security:smoke, security:scan, audit:prod.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
 

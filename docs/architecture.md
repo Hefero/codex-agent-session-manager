@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 7 lifecycle and MCP refresh workflow
+Status: Phase 10 package/install hardening
 Date: 2026-06-07
 
 ## Thesis
@@ -259,6 +259,49 @@ Phase 7 starts App Server lifecycle management from MCP:
 - `codex_session_launch` remains scoped to visible TUI launch against a known
   App Server URL/state. Keeping these operations separate avoids hiding process
   ownership changes inside a TUI-launch command.
+
+Phase 8 exposes the same surface as an operator CLI:
+
+- `app-server start|status|stop`, `mcp refresh`, and
+  `session launch|close|replace` are public CLI commands over the same typed
+  payload builders used by MCP tools.
+- The CLI returns JSON by default and is intended for operator automation,
+  shell use, and future preloaders.
+- It does not add a raw App Server JSON-RPC proxy or a second lifecycle model.
+- Destructive or process-launching commands still default to dry-run and
+  require `--confirm` for real execution.
+- Prompt-bearing commands support `--prompt-file`; prompt bodies remain
+  operator text and should not be treated as structured evidence.
+
+Phase 9 adds project bootstrap:
+
+- `codex-agent-session-manager init` prepares a target workspace without
+  touching user global Codex config.
+- The project-scoped `.codex/config.toml` registers
+  `codex_agent_session_manager` with `command = "codex-agent-session-manager"`
+  and `args = ["serve"]`.
+- Runtime state is kept under `.codex-agent-session-manager/` and ignored by
+  the target project's `.gitignore`.
+- `package.json` is updated only when it already exists. Scripts use the
+  package binary directly so `npm run codex:init`, `npm run codex:remote`, and
+  related commands supply local `node_modules/.bin` on PATH for both App Server
+  and MCP startup.
+- `AGENTS.md` gets a small managed block by default and can be skipped with
+  `--no-agents`.
+- On Windows, hidden launcher preparation is local runtime state and remains
+  limited to the managed App Server initial process.
+
+Phase 10 hardens packaging:
+
+- The npm artifact is intentionally small: `dist/`, `scripts/*.cs`,
+  `README.md`, `LICENSE`, and npm's required package metadata.
+- Source, test, docs, project `.codex*` runtime state, and `.exe` runtime
+  binaries are excluded from the package.
+- The package smoke installs the generated `.tgz` into a temporary project and
+  validates installed `dist/cli.js`, project `init`, generated scripts,
+  project-scoped MCP config, and `codex:remote:dry-run`.
+- Automated smoke stops at remote dry-run. Opening a real Codex TUI remains a
+  manual probe because it is operator-visible process/session behavior.
 
 ## Boundaries
 

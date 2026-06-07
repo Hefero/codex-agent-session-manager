@@ -320,7 +320,7 @@ function compileWindowsHiddenLauncher(outputPath: string, sourceHash: string, st
   return existsSync(outputPath);
 }
 
-function resolveWindowsHiddenLauncher(workspace: string, dryRun: boolean): string | null {
+export function prepareWindowsHiddenLauncherForWorkspace(workspace: string, dryRun: boolean): string | null {
   if (process.platform !== 'win32') return null;
   if (!existsSync(WINDOWS_HIDDEN_LAUNCHER_SOURCE)) return null;
 
@@ -353,7 +353,7 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
     serverArgs.push('--disable', 'image_generation');
   }
   const hiddenLauncher = canLaunchThroughWindowsHiddenLauncher(codexCommand)
-    ? resolveWindowsHiddenLauncher(workspace, options.dryRun === true)
+    ? prepareWindowsHiddenLauncherForWorkspace(workspace, options.dryRun === true)
     : null;
   const serverCommand = hiddenLauncher ?? codexCommand;
   const serverArgsWithLauncher = hiddenLauncher ? [codexCommand, ...serverArgs] : serverArgs;

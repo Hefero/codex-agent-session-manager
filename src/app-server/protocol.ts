@@ -91,6 +91,25 @@ export interface ThreadReadResult {
   [key: string]: unknown;
 }
 
+export interface TurnStartParams {
+  threadId: string;
+  cwd: string;
+  clientUserMessageId: string;
+  input: Array<{
+    type: 'text';
+    text: string;
+  }>;
+}
+
+export interface TurnStartResult {
+  turn?: {
+    id?: string;
+    [key: string]: unknown;
+  };
+  id?: string;
+  [key: string]: unknown;
+}
+
 export type McpServerStatusDetail = 'toolsAndAuthOnly' | 'full';
 
 export interface McpServerStatusListParams {
@@ -134,6 +153,10 @@ export interface AppServerRequestMap {
   'thread/read': {
     params: ThreadReadParams;
     result: ThreadReadResult;
+  };
+  'turn/start': {
+    params: TurnStartParams;
+    result: TurnStartResult;
   };
   'mcpServerStatus/list': {
     params: McpServerStatusListParams;

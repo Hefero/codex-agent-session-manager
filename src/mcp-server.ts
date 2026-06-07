@@ -16,6 +16,7 @@ import {
 } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
 import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
+import { buildSessionContinuePayload, sessionContinueInputSchema } from './tools/session-continue.js';
 import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
 import { packageName, packageVersion } from './version.js';
 
@@ -188,6 +189,28 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = buildMcpReloadPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_session_continue',
+    {
+      title: 'Continue Codex Session',
+      description: 'Schedule a continuation turn after the target thread reaches an idle boundary. Prompt text is never returned in operation evidence.',
+      inputSchema: sessionContinueInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = buildSessionContinuePayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

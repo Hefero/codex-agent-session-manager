@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 4 reload complete; continuation next
+Status: Phase 4 reload and continuation complete
 
 ## Bootstrap Workflow
 
@@ -133,7 +133,7 @@ Exit criteria:
 - Handler/schema/new-tool fixture probes pass by continuation.
 - Same-turn stale behavior is recorded as diagnostic, not pass.
 
-Status: reload complete; continuation not started.
+Status: reload and continuation complete.
 
 Implemented:
 
@@ -149,6 +149,12 @@ Implemented:
   ignored stdio, detached process mode, and `windowsHide`.
 - The child calls `config/mcpServer/reload` and records optional
   status-before/status-after evidence when a `threadId` is provided.
+- `codex_session_continue` creates a durable `session_continue` operation and
+  schedules a detached child process.
+- The continuation child waits for an explicit target thread to reach the
+  idle/stable boundary, then calls `turn/start`.
+- Continuation prompts are passed through child environment and are not returned
+  in operation evidence or argv.
 
 Validation:
 
@@ -173,12 +179,19 @@ Validation:
 - Replacement/fresh remote TUI called `codex_mcp_reload`; the returned
   operation completed and retained `background`, `statusBefore`, and
   `statusAfter` evidence.
+- Unit tests cover continuation operation scheduling, prompt redaction from
+  payload/evidence, argv parsing without prompt text, idle wait, and
+  `turn/start` through a fake client.
+- App Server status listed `codex_session_continue`.
+- A fresh proof turn called `codex_session_continue`; the returned operation
+  scheduled a detached child with `argvIncludesPrompt: false`.
+- The operation completed with `ready.ok: true` and `turnStart` evidence.
+- The child continuation turn replied with the requested proof marker, and the
+  operation JSON did not contain the prompt text.
 
 Remaining in Phase 4:
 
-- `codex_session_continue`;
-- operation evidence for idle/stable wait and `turn/start`;
-- final flow tying reload plus continuation proof together.
+- compose reload plus continuation into one higher-level workflow when useful.
 
 ## Phase 5: Session Launch, Close, Replace
 

@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 4 reload
+Status: Phase 4 reload and continuation
 Date: 2026-06-06
 
 ## Thesis
@@ -99,11 +99,11 @@ The current MCP surface exposes:
 - `codex_operation_read`
 - `codex_operation_wait`
 - `codex_mcp_reload`
+- `codex_session_continue`
 - `codex-session-manager://operations`
 
 Planned next tools:
 
-- `codex_session_continue`
 - `codex_session_launch`
 - `codex_session_close`
 - `codex_session_replace`
@@ -134,6 +134,20 @@ Phase 4 reload proof added the first mutating operation:
 - Replacement/fresh remote proof called `codex_mcp_reload`, then
   `codex_operation_wait`/`codex_operation_read`, and observed a completed
   operation with before/after status evidence.
+
+Phase 4 continuation adds the second mutating operation:
+
+- `codex_session_continue` creates a durable `session_continue` operation and
+  schedules a detached child process.
+- The prompt is passed to the child through environment, not argv, and prompt
+  text is not returned in structured output or operation evidence.
+- The child waits for the explicit target thread to reach an idle/stable
+  boundary, then calls `turn/start`.
+- Final proof still requires the started continuation turn to call the intended
+  model-callable tool.
+- The first callable proof called `codex_session_continue` from a fresh proof
+  turn, observed a completed durable operation with `ready` and `turnStart`
+  evidence, and observed the child turn respond with the requested marker.
 
 ## Boundaries
 

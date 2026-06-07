@@ -12,6 +12,8 @@ import type {
   McpServerStatusEntry,
   ThreadListEntry,
   ThreadReadResult,
+  TurnStartParams,
+  TurnStartResult,
 } from './protocol.js';
 import { nextCursorFrom } from './protocol.js';
 
@@ -118,6 +120,10 @@ export class AppServerJsonRpcClient {
 
   async reloadMcpServers(): Promise<unknown> {
     return this.request('config/mcpServer/reload', undefined);
+  }
+
+  async startTurn(input: TurnStartParams): Promise<TurnStartResult> {
+    return this.request('turn/start', input);
   }
 
   async listMcpServerStatuses(input: {

@@ -91,6 +91,32 @@ test('reloadMcpServers sends config/mcpServer/reload without params', async () =
   assert.deepEqual(await reload, { queued: true });
 });
 
+test('startTurn sends turn/start with text input', async () => {
+  const { client, connection } = createClient();
+  await initializeClient(client);
+
+  const started = client.startTurn({
+    threadId: 'thread-a',
+    cwd: 'C:\\workspace',
+    clientUserMessageId: 'message-a',
+    input: [{ type: 'text', text: 'continue prompt' }],
+  });
+  assert.deepEqual(connection.sent[2], {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'turn/start',
+    params: {
+      threadId: 'thread-a',
+      cwd: 'C:\\workspace',
+      clientUserMessageId: 'message-a',
+      input: [{ type: 'text', text: 'continue prompt' }],
+    },
+  });
+
+  client.handleIncomingMessage(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { turn: { id: 'turn-a' } } }));
+  assert.deepEqual(await started, { turn: { id: 'turn-a' } });
+});
+
 test('App Server errors become AppServerRpcError with redacted public message', async () => {
   const { client } = createClient();
   await initializeClient(client);

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { startStdioServer } from './mcp-server.js';
 import { runMcpReloadOperationFromArgv } from './tools/reload.js';
+import { runSessionContinueOperationFromArgv } from './tools/session-continue.js';
 import { packageName, packageVersion } from './version.js';
 
 function printHelp(): void {
@@ -36,6 +37,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'run-mcp-reload-operation') {
     await runMcpReloadOperationFromArgv(argv.slice(1));
+    return;
+  }
+
+  if (command === 'run-session-continue-operation') {
+    await runSessionContinueOperationFromArgv(argv.slice(1));
     return;
   }
 

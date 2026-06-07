@@ -16,8 +16,9 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 ## Current State
 
 Phases 1, 2, and 3 are implemented and validated. Phase 4 now has durable
-operation state and `codex_mcp_reload`; check `git log` and `git status` for
-the latest commit state.
+operation state, `codex_mcp_reload`, and `codex_session_continue` with
+fresh-turn callable proof; check `git log` and `git status` for the latest
+commit state.
 
 Implemented:
 
@@ -31,6 +32,7 @@ Implemented:
 - Read-only thread recommendation tool `codex_thread_context`.
 - Operation tools `codex_operation_read` and `codex_operation_wait`.
 - Reload tool `codex_mcp_reload`.
+- Continuation tool `codex_session_continue`.
 - Resource `codex-session-manager://operations`.
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
@@ -82,6 +84,9 @@ git diff --check
 - Resolve App Server URL from explicit tool input, `CODEX_APP_SERVER_URL`, or
   workspace launcher state. Prefer `.codex-agent-session-manager` state when
   available; `.codex-mcp-hot-reloader` state is bootstrap compatibility only.
+- Keep continuation prompts out of argv, structured output, operation evidence,
+  and log-like failure evidence. The first `codex_session_continue`
+  implementation requires an explicit `threadId`.
 
 ## Latest Phase 3 Evidence
 
@@ -158,11 +163,42 @@ Readback from durable operation state confirmed the final operation retained:
 requested, background, statusBefore, reload, statusAfter
 ```
 
+## Latest Phase 4 Continuation Evidence
+
+Local validation currently covers:
+
+```text
+npm run check
+npm test
+npm run smoke
+npm run build
+git diff --check
+```
+
+Unit tests cover scheduling a durable `session_continue` operation, carrying
+the prompt to the child without argv, omitting prompt text from structured
+payload/evidence, waiting for idle status, and calling `turn/start`.
+
+External App Server reload and fresh-turn callable proof also passed:
+
+```text
+codex_session_continue callable: true
+operationId: 88131a2f-2056-4873-ad5f-91d92d933fcf
+background scheduled: true
+operation status: completed
+ready.ok: true
+turnStart recorded: true
+argvIncludesPrompt: false
+prompt text present in operation JSON: false
+child turn marker: PHASE5_CONTINUE_CHILD_PROOF_RECEIVED
+```
+
 ## Bootstrap Rule
 
-Until Phase 4 minimum exists, this session is a dogfood worker, not the primary
-controller. A separate controller session may inject narrow checkpoints,
-schedule reloads/continuations, and authorize commits/pushes.
+Until the next session-management tools exist, this session is still a dogfood
+worker, not the primary controller. A separate controller session may
+inject narrow checkpoints, schedule reloads/continuations, and authorize
+commits/pushes.
 
 Do not try to fully self-manage yet. Use the repo-local MCP tools when they are
 available, and report whether they are callable.
@@ -170,10 +206,7 @@ available, and report whether they are callable.
 ## Next Work
 
 1. Inspect the scaffold and current git status.
-2. Continue Phase 4 with:
-   - `codex_session_continue`;
-   - operation evidence for idle/stable wait and `turn/start`;
-   - fresh-turn callable proof after reload.
+2. Tie reload plus continuation into a proof flow when useful.
 3. Keep all future session-manager tools small, typed, and explicitly guarded.
 
 ## Do Not Do

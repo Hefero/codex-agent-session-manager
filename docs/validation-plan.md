@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: Phase 4 reload
+Status: Phase 4 reload and continuation
 
 ## Scaffold Checks
 
@@ -22,6 +22,7 @@ The smoke must prove:
   - `codex_operation_read`
   - `codex_operation_wait`
   - `codex_mcp_reload`
+  - `codex_session_continue`
 - `tools/call` can call `codex_session_manager_probe`.
 - `resources/list` includes `codex-session-manager://operations`.
 
@@ -41,6 +42,13 @@ Current read-only checks:
 - observe operation completion written by another store/process instance.
 - schedule MCP reload through durable operation state and detached child process;
 - record diagnostic MCP status before/after reload when a thread id is supplied.
+- schedule a continuation through durable operation state and a detached child
+  process;
+- pass continuation prompt text outside argv, structured output, operation
+  evidence, and failure evidence;
+- wait for idle/stable thread boundary before `turn/start`.
+- prove `codex_session_continue` by a real model-callable invocation, then
+  confirm the child turn started and replied from the scheduled continuation.
 
 ## Callable Catalog Proof Matrix
 

@@ -440,7 +440,8 @@ Implemented:
 - `--confirm` switches guarded dry-run operations into real execution by
   setting `dryRun:false`; `--dry-run` remains explicit preview mode.
 - `--prompt-file` is available for refresh, launch, and replace prompts when
-  shell history should not contain prompt text.
+  shell history should not contain prompt text. Prompt files are restricted to
+  the current workspace and bounded before read.
 - Top-level help now advertises the public CLI commands.
 - The `mcp` command dispatches to the public CLI when a subcommand or help flag
   is present, while `serve` remains the explicit stdio-server command.

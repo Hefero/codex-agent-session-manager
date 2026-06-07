@@ -219,3 +219,16 @@ test('session launch operation argv round trips without prompt text', () => {
     timeoutMs: 5_000,
   });
 });
+
+test('session launch operation argv rejects missing workspace', () => {
+  const missingWorkspace = join(tmpdir(), `codex-agent-session-manager-missing-${crypto.randomUUID()}`);
+  const args = buildSessionLaunchOperationArgs({
+    operationId: 'op-a',
+    appServerUrl,
+    workspace: missingWorkspace,
+    mode: 'session',
+    threadId: 'thread-a',
+  });
+
+  assert.throws(() => parseSessionLaunchOperationArgs(args.slice(1)), /Workspace root must exist/u);
+});

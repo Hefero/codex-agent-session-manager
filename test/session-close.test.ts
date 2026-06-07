@@ -256,3 +256,15 @@ test('session close operation argv round trips without broad cleanup flags', () 
     delayMs: 0,
   });
 });
+
+test('session close operation argv rejects missing workspace', () => {
+  const missingWorkspace = join(tmpdir(), `codex-agent-session-manager-missing-${crypto.randomUUID()}`);
+  const args = buildSessionCloseOperationArgs({
+    operationId: 'op-a',
+    appServerUrl,
+    threadId,
+    workspace: missingWorkspace,
+  });
+
+  assert.throws(() => parseSessionCloseOperationArgs(args.slice(1)), /Workspace root must exist/u);
+});

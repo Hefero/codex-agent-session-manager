@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import { connectAppServerClient } from '../app-server/client.js';
 import { resolveAppServerUrl } from '../app-server/config.js';
 import type { McpServerStatusEntry } from '../app-server/protocol.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 import { waitForThreadIdle, type SessionContinueClient } from './session-continue.js';
 
@@ -462,7 +462,7 @@ export async function runMcpRefreshOperation(
     }
 
     const clientUserMessageId = `codex-session-manager-refresh-${Date.now()}`;
-    const cwd = resolve(process.cwd());
+    const cwd = resolveWorkspaceRoot();
     const started = await client.startTurn({
       threadId: input.threadId,
       cwd,

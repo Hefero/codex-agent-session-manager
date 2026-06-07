@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import { resolveAppServerUrl } from '../app-server/config.js';
@@ -12,6 +11,7 @@ import {
   type ProcessEntry,
 } from '../processes.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -208,7 +208,7 @@ export function parseSessionCloseOperationArgs(argv: readonly string[]): Session
     operationId,
     appServerUrl: resolveAppServerUrl(appServerUrl),
     threadId,
-    workspace: resolve(workspace),
+    workspace: resolveWorkspaceRoot(workspace),
     timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
     delayMs: Number.isFinite(delayMs) ? delayMs : undefined,
   });
@@ -252,7 +252,7 @@ export function buildSessionClosePayload(
   const scheduler = deps.scheduler ?? spawnSessionCloseOperation;
   const processLister = deps.processLister ?? listProcesses;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
-  const workspace = resolve(process.cwd());
+  const workspace = resolveWorkspaceRoot();
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const delayMs = input.delayMs ?? DEFAULT_DELAY_MS;
   const dryRun = input.dryRun ?? true;
@@ -395,7 +395,7 @@ export async function runSessionCloseOperation(
   const processLister = deps.processLister ?? listProcesses;
   const processStopper = deps.processStopper ?? stopProcessTree;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
-  const workspace = resolve(input.workspace);
+  const workspace = resolveWorkspaceRoot(input.workspace);
   const timeoutMs = boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 0, MAX_TIMEOUT_MS);
   const delayMs = boundedInteger(input.delayMs, DEFAULT_DELAY_MS, 0, MAX_DELAY_MS);
   const requested = requestedEvidence({

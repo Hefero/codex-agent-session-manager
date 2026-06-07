@@ -1,7 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { parsePublicCommand, runPublicCommand } from '../src/public-cli.js';
+
+function tempWorkspace(prefix = 'codex-agent-session-manager-public-cli-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+function withCwd<T>(cwd: string, run: () => T): T {
+  const previous = process.cwd();
+  process.chdir(cwd);
+  try {
+    return run();
+  } finally {
+    process.chdir(previous);
+  }
+}
 
 test('parsePublicCommand maps app-server lifecycle commands', () => {
   assert.deepEqual(parsePublicCommand(['app-server', 'start', '--port', '4566', '--confirm']), {
@@ -117,6 +134,79 @@ test('parsePublicCommand maps session commands', () => {
       prompt: 'hello',
     },
   });
+});
+
+test('parsePublicCommand reads prompt files only from the current workspace', () => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace('codex-agent-session-manager-public-cli-outside-');
+  try {
+    writeFileSync(join(workspace, 'prompt.txt'), 'workspace prompt', 'utf8');
+    writeFileSync(join(outside, 'secret.txt'), 'outside prompt', 'utf8');
+
+    withCwd(workspace, () => {
+      assert.deepEqual(parsePublicCommand(['session', 'replace', '--thread-id', 'thread-a', '--prompt-file', 'prompt.txt']), {
+        command: 'session',
+        subcommand: 'replace',
+        input: {
+          threadId: 'thread-a',
+          prompt: 'workspace prompt',
+        },
+      });
+
+      assert.throws(
+        () => parsePublicCommand(['session', 'replace', '--thread-id', 'thread-a', '--prompt-file', join(outside, 'secret.txt')]),
+        /must stay inside the workspace/u,
+      );
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('parsePublicCommand rejects prompt-file symlink or junction escapes', (t) => {
+  const workspace = tempWorkspace();
+  const outside = tempWorkspace('codex-agent-session-manager-public-cli-outside-');
+  try {
+    writeFileSync(join(outside, 'secret.txt'), 'outside prompt', 'utf8');
+    try {
+      symlinkSync(join(outside, 'secret.txt'), join(workspace, 'linked-prompt.txt'), 'file');
+    } catch {
+      t.skip('symlink creation is unavailable in this environment');
+      return;
+    }
+
+    withCwd(workspace, () => {
+      assert.throws(
+        () => parsePublicCommand(['mcp', 'refresh', '--thread-id', 'thread-a', '--prompt-file', 'linked-prompt.txt']),
+        /symlink or junction/u,
+      );
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('parsePublicCommand applies prompt length limits to prompt text and files', () => {
+  const workspace = tempWorkspace();
+  try {
+    const longPrompt = 'x'.repeat(4_001);
+    writeFileSync(join(workspace, 'long-prompt.txt'), longPrompt, 'utf8');
+
+    withCwd(workspace, () => {
+      assert.throws(
+        () => parsePublicCommand(['session', 'launch', '--prompt', longPrompt]),
+        /--prompt must be at most 4000 characters/u,
+      );
+      assert.throws(
+        () => parsePublicCommand(['session', 'launch', '--prompt-file', 'long-prompt.txt']),
+        /--prompt-file must be at most 4000 characters/u,
+      );
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test('runPublicCommand prints JSON for app-server start dry-run', async () => {

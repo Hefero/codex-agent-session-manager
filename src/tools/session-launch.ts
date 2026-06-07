@@ -1,10 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
 import { resolveAppServerUrl } from '../app-server/config.js';
 import { redactArgv, redactSensitiveText, redactValue } from '../security/redaction.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -343,7 +344,7 @@ export function parseSessionLaunchOperationArgs(argv: readonly string[]): Sessio
   return operationInputForOptionalValues({
     operationId,
     appServerUrl: resolveAppServerUrl(appServerUrl),
-    workspace: resolve(workspace),
+    workspace: resolveWorkspaceRoot(workspace),
     mode,
     threadId,
     bypassSandbox,
@@ -440,7 +441,7 @@ export function buildSessionLaunchPayload(
   const scheduler = deps.scheduler ?? spawnSessionLaunchOperation;
   const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
-  const workspace = resolve(process.cwd());
+  const workspace = resolveWorkspaceRoot();
   const mode = resolveLaunchMode(input);
   validateLaunchMode({ mode, threadId: input.threadId });
   const prompt = input.prompt ?? null;
@@ -554,7 +555,7 @@ export async function runSessionLaunchOperation(
   const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
   const launchExecutor = deps.launchExecutor ?? launchCodexRemote;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
-  const workspace = resolve(input.workspace);
+  const workspace = resolveWorkspaceRoot(input.workspace);
   const prompt = promptFromEnv(deps.env);
   const codexCommand = codexCommandResolver();
   const args = buildCodexArgs({

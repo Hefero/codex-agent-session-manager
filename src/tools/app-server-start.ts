@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import {
@@ -11,6 +10,7 @@ import {
   type RemotePlan,
 } from '../remote.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 
 const INTERNAL_COMMAND = 'run-app-server-start-operation';
@@ -134,7 +134,7 @@ export function parseAppServerStartOperationArgs(argv: readonly string[]): AppSe
   const operationInput: AppServerStartOperationInput = {
     operationId,
     appServerUrl,
-    workspace: resolve(workspace),
+    workspace: resolveWorkspaceRoot(workspace),
   };
   if (enableImageGeneration !== undefined) operationInput.enableImageGeneration = enableImageGeneration;
   return operationInput;
@@ -174,7 +174,7 @@ export async function buildAppServerStartPayload(
   const store = deps.store ?? operationStore;
   const scheduler = deps.scheduler ?? spawnAppServerStartOperation;
   const planBuilder = deps.planBuilder ?? buildRemotePlan;
-  const workspace = resolve(process.cwd());
+  const workspace = resolveWorkspaceRoot();
   const dryRun = input.dryRun ?? true;
   const requested = requestedEvidence({
     appServerUrl: input.appServerUrl,
@@ -262,7 +262,7 @@ export async function runAppServerStartOperation(
     remoteDeps?: RemoteDeps;
   } = {},
 ): Promise<OperationRecord | null> {
-  const workspace = resolve(input.workspace);
+  const workspace = resolveWorkspaceRoot(input.workspace);
   const store = deps.store ?? new OperationStore({ workspace });
   const planBuilder = deps.planBuilder ?? buildRemotePlan;
   const executor = deps.executor ?? executeRemotePlan;

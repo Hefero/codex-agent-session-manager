@@ -218,3 +218,14 @@ test('app server start operation argv round trips', () => {
     enableImageGeneration: true,
   });
 });
+
+test('app server start operation argv rejects missing workspace', () => {
+  const missingWorkspace = join(tmpdir(), `codex-agent-session-manager-missing-${crypto.randomUUID()}`);
+  const args = buildAppServerStartOperationArgs({
+    operationId: 'op-a',
+    appServerUrl: 'ws://127.0.0.1:4559',
+    workspace: missingWorkspace,
+  });
+
+  assert.throws(() => parseAppServerStartOperationArgs(args.slice(1)), /Workspace root must exist/u);
+});

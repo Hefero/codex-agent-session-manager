@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import { connectAppServerClient } from '../app-server/client.js';
 import { resolveAppServerUrl } from '../app-server/config.js';
 import type { ThreadReadResult, TurnStartParams, TurnStartResult } from '../app-server/protocol.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 
 const DEFAULT_PROMPT = 'Codex session continuation turn. Refresh callable tool context and continue validation.';
@@ -499,7 +499,7 @@ export async function runSessionContinueOperation(
     }
 
     const clientUserMessageId = `codex-session-manager-continue-${Date.now()}`;
-    const cwd = resolve(process.cwd());
+    const cwd = resolveWorkspaceRoot();
     const started = await client.startTurn({
       threadId: input.threadId,
       cwd,

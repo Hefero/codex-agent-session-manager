@@ -282,6 +282,18 @@ test('session replace operation argv round trips without prompt text or broad cl
   });
 });
 
+test('session replace operation argv rejects missing workspace', () => {
+  const missingWorkspace = join(tmpdir(), `codex-agent-session-manager-missing-${crypto.randomUUID()}`);
+  const args = buildSessionReplaceOperationArgs({
+    operationId: 'op-a',
+    appServerUrl,
+    workspace: missingWorkspace,
+    threadId,
+  });
+
+  assert.throws(() => parseSessionReplaceOperationArgs(args.slice(1)), /Workspace root must exist/u);
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }

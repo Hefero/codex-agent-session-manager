@@ -1,10 +1,10 @@
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import { readWorkspaceAppServerStates, type AppServerStateRead } from '../app-server/state.js';
 import { pathsMatch } from '../processes.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
 import { validateAppServerUrl } from '../security/url.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 
 export const appServerStateReadInputSchema = {
   includeLegacy: z.boolean().optional().describe('Defaults true. Include legacy .codex-mcp-hot-reloader launcher state as bootstrap compatibility.'),
@@ -45,7 +45,7 @@ function publicStateRead(read: AppServerStateRead, workspace: string): Record<st
     source: read.source,
     exists: read.exists,
     ok: read.ok,
-    stateFilePreview: redactSensitiveText(read.stateFile.replace(resolve(workspace), '<workspace>')),
+    stateFilePreview: redactSensitiveText(read.stateFile.replace(resolveWorkspaceRoot(workspace), '<workspace>')),
   };
   if (read.error !== undefined) {
     summary.error = publicError(read.error);
@@ -113,7 +113,7 @@ export function buildAppServerStateReadPayload(
   } = {},
 ): Record<string, unknown> {
   const env = deps.env ?? process.env;
-  const workspace = resolve(deps.workspace ?? process.cwd());
+  const workspace = resolveWorkspaceRoot(deps.workspace);
   const reads = readWorkspaceAppServerStates(workspace, { includeLegacy: input.includeLegacy ?? true });
 
   return {

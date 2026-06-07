@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 
 import { buildAppServerStatusPayload, buildAppServerStopPayload } from './tools/app-server-lifecycle.js';
 import { buildAppServerStartPayload } from './tools/app-server-start.js';
@@ -7,6 +7,10 @@ import { buildMcpRefreshPayload } from './tools/mcp-refresh.js';
 import { buildSessionClosePayload } from './tools/session-close.js';
 import { buildSessionLaunchPayload } from './tools/session-launch.js';
 import { buildSessionReplacePayload } from './tools/session-replace.js';
+import { workspacePath } from './security/workspace.js';
+
+const MAX_PROMPT_CHARS = 4_000;
+const MAX_PROMPT_FILE_BYTES = 16_384;
 
 const booleanFlags = new Set([
   'bypass-sandbox',
@@ -52,7 +56,7 @@ Common options:
   --url <ws-url>                    Loopback App Server websocket URL.
   --thread-id <id>                  Target Codex thread id.
   --prompt <text>                   Non-secret prompt text.
-  --prompt-file <path>              Read prompt text from a local file.
+  --prompt-file <path>              Read prompt text from a workspace file.
   --dry-run                         Preview only.
   --confirm                         Execute a command that defaults to dry-run.
   --timeout-ms <ms>                 Request or operation timeout.
@@ -139,9 +143,24 @@ function optionalPrompt(flags: Map<string, string[]>): string | undefined {
   if (prompt !== undefined && promptFile !== undefined) {
     throw new Error('Use only one of --prompt or --prompt-file.');
   }
-  if (prompt !== undefined) return prompt;
-  if (promptFile !== undefined) return readFileSync(promptFile, 'utf8');
+  if (prompt !== undefined) return checkedPromptText(prompt, '--prompt');
+  if (promptFile !== undefined) {
+    const resolvedPromptFile = workspacePath(process.cwd(), promptFile);
+    const stat = statSync(resolvedPromptFile);
+    if (!stat.isFile()) throw new Error('--prompt-file must point to a file.');
+    if (stat.size > MAX_PROMPT_FILE_BYTES) {
+      throw new Error(`--prompt-file must be at most ${MAX_PROMPT_FILE_BYTES} bytes.`);
+    }
+    return checkedPromptText(readFileSync(resolvedPromptFile, 'utf8'), '--prompt-file');
+  }
   return undefined;
+}
+
+function checkedPromptText(prompt: string, source: string): string {
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    throw new Error(`${source} must be at most ${MAX_PROMPT_CHARS} characters.`);
+  }
+  return prompt;
 }
 
 function addOptional(target: Record<string, unknown>, key: string, value: unknown): void {

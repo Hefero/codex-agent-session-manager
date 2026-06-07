@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import { resolveAppServerUrl } from '../app-server/config.js';
@@ -11,6 +10,7 @@ import {
   type ProcessEntry,
 } from '../processes.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 import {
   buildCodexArgs,
@@ -281,7 +281,7 @@ export function parseSessionReplaceOperationArgs(argv: readonly string[]): Sessi
   return operationInputForOptionalValues({
     operationId,
     appServerUrl: resolveAppServerUrl(appServerUrl),
-    workspace: resolve(workspace),
+    workspace: resolveWorkspaceRoot(workspace),
     threadId,
     bypassSandbox,
     enableImageGeneration,
@@ -331,7 +331,7 @@ export function buildSessionReplacePayload(
   const processLister = deps.processLister ?? listProcesses;
   const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
-  const workspace = resolve(process.cwd());
+  const workspace = resolveWorkspaceRoot();
   const prompt = input.prompt ?? null;
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const delayMs = input.delayMs ?? DEFAULT_DELAY_MS;
@@ -446,7 +446,7 @@ export async function runSessionReplaceOperation(
   const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
   const launchExecutor = deps.launchExecutor ?? launchCodexRemote;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
-  const workspace = resolve(input.workspace);
+  const workspace = resolveWorkspaceRoot(input.workspace);
   const prompt = promptFromEnv(deps.env);
   const timeoutMs = boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 0, MAX_TIMEOUT_MS);
   const delayMs = boundedInteger(input.delayMs, DEFAULT_DELAY_MS, 0, MAX_DELAY_MS);

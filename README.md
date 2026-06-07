@@ -125,7 +125,8 @@ CLI output is JSON by default. Operations that modify files, run package
 installs, are destructive, or launch real processes default to dry-run and
 require `--confirm` for real execution.
 Continuation and replacement prompts are operator text; prefer `--prompt-file`
-when avoiding prompt text in shell history.
+when avoiding prompt text in shell history. Prompt files are resolved inside the
+current workspace and are limited before being read.
 
 `init` is the exception: it prints a human-readable action list by default.
 Use `codex-agent-session-manager init --json` when automation needs the

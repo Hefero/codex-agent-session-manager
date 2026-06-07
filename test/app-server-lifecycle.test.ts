@@ -318,3 +318,15 @@ test('app server stop operation argv round trips', () => {
     delayMs: 0,
   });
 });
+
+test('app server stop operation argv rejects missing workspace', () => {
+  const missingWorkspace = join(tmpdir(), `codex-agent-session-manager-missing-${crypto.randomUUID()}`);
+  const args = buildAppServerStopOperationArgs({
+    operationId: 'op-a',
+    workspace: missingWorkspace,
+    expectedPid: 40,
+    expectedAppServerUrl: appServerUrl,
+  });
+
+  assert.throws(() => parseAppServerStopOperationArgs(args.slice(1)), /Workspace root must exist/u);
+});

@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { z } from 'zod';
 
 import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState, type AppServerState } from '../app-server/state.js';
@@ -13,6 +12,7 @@ import {
 } from '../processes.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
 import { validateAppServerUrl } from '../security/url.js';
+import { resolveWorkspaceRoot } from '../security/workspace.js';
 import { OperationStore, operationStore, type OperationRecord } from './operations.js';
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -177,7 +177,7 @@ function managedAppServerTarget(input: {
 
 function publicTarget(target: ManagedAppServerTarget, workspace: string, includeProcessTree = true): Record<string, unknown> {
   const payload: Record<string, unknown> = {
-    stateFilePreview: redactSensitiveText(target.stateFile.replace(resolve(workspace), '<workspace>')),
+    stateFilePreview: redactSensitiveText(target.stateFile.replace(resolveWorkspaceRoot(workspace), '<workspace>')),
     stateExists: target.stateExists,
     stateOk: target.stateOk,
     url: target.url === null ? null : redactSensitiveText(target.url),
@@ -235,7 +235,7 @@ export async function buildAppServerStatusPayload(
     readyProbe?: ReadyProbe;
   } = {},
 ): Promise<Record<string, unknown>> {
-  const workspace = resolve(deps.workspace ?? process.cwd());
+  const workspace = resolveWorkspaceRoot(deps.workspace);
   const includeProcessTree = input.includeProcessTree ?? true;
   const probeReady = input.probeReady ?? true;
   const readyTimeoutMs = input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
@@ -335,7 +335,7 @@ export function parseAppServerStopOperationArgs(argv: readonly string[]): AppSer
 
   const operationInput: AppServerStopOperationInput = {
     operationId,
-    workspace: resolve(workspace),
+    workspace: resolveWorkspaceRoot(workspace),
     expectedPid: parsedExpectedPid,
     expectedAppServerUrl: validateAppServerUrl(expectedAppServerUrl, 'Expected App Server URL').href,
   };
@@ -379,7 +379,7 @@ export function buildAppServerStopPayload(
     processLister?: ProcessLister;
   } = {},
 ): Record<string, unknown> {
-  const workspace = resolve(deps.workspace ?? process.cwd());
+  const workspace = resolveWorkspaceRoot(deps.workspace);
   const store = deps.store ?? operationStore;
   const scheduler = deps.scheduler ?? spawnAppServerStopOperation;
   const processLister = deps.processLister ?? listProcesses;
@@ -531,7 +531,7 @@ export async function runAppServerStopOperation(
     processStopper?: ProcessStopper;
   } = {},
 ): Promise<OperationRecord | null> {
-  const workspace = resolve(input.workspace);
+  const workspace = resolveWorkspaceRoot(input.workspace);
   const store = deps.store ?? new OperationStore({ workspace });
   const processLister = deps.processLister ?? listProcesses;
   const processStopper = deps.processStopper ?? stopProcessTree;

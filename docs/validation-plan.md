@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: Phase 10 package/install hardening implemented
+Status: alpha.3 workspace, prompt, and package/install hardening implemented
 
 ## Scaffold Checks
 
@@ -59,6 +59,9 @@ The smoke must prove:
   without writing files; `--json` keeps machine-readable output.
 - CLI deinit dry-run emits human-readable output for a temporary workspace
   without writing files and reports packages to uninstall afterward.
+- CLI prompt files are accepted only from the current workspace, reject
+  symlink/junction escapes, and enforce prompt size limits before scheduling
+  refresh/launch/replace work.
 
 ## App Server And Session Checks
 

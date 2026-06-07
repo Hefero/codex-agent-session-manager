@@ -301,7 +301,9 @@ Phase 8 exposes the same surface as an operator CLI:
 - Destructive or process-launching commands still default to dry-run and
   require `--confirm` for real execution.
 - Prompt-bearing commands support `--prompt-file`; prompt bodies remain
-  operator text and should not be treated as structured evidence.
+  operator text and should not be treated as structured evidence. Prompt files
+  are resolved inside the current workspace, reject symlink/junction escapes,
+  and are size/character bounded before they are read.
 
 Phase 9 adds project bootstrap:
 

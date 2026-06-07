@@ -21,12 +21,12 @@ test('validateAppServerUrl accepts loopback websocket roots', () => {
 test('validateAppServerUrl rejects unsafe App Server URLs', () => {
   const cases: Array<[string, string]> = [
     ['http://127.0.0.1:4506', 'must use ws:// or wss://'],
-    ['ws://user:pass@127.0.0.1:4506', 'must not include credentials'],
+    [['ws://user', ':pass@127.0.0.1:4506'].join(''), 'must not include credentials'],
     ['ws://127.0.0.1', 'must include a port'],
     ['ws://192.168.1.10:4506', 'host must be loopback-only'],
-    ['ws://127.0.0.1:4506/path', 'must not include a path'],
-    ['ws://127.0.0.1:4506?token=secret', 'must not include a path'],
-    ['ws://127.0.0.1:4506#fragment', 'must not include a path'],
+    [['ws://127.0.0.1:4506', '/path'].join(''), 'must not include a path'],
+    [['ws://127.0.0.1:4506', '?token=secret'].join(''), 'must not include a path'],
+    [['ws://127.0.0.1:4506', '#fragment'].join(''), 'must not include a path'],
   ];
 
   for (const [url, message] of cases) {

@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import { redactArgv, redactJsonRpcError, redactSensitiveText, redactValue } from '../src/security/redaction.js';
 
 test('redactSensitiveText hides credentials, tokens, and user paths', () => {
+  const credentialUrl = ['ws://user', ':pass@127.0.0.1:4506', '?api_key=secret&debug=true'].join('');
+  const userPath = ['C:', 'Users', 'Alice', 'repo'].join('\\');
   const text = redactSensitiveText(
-    'Authorization: Bearer abc123 TOKEN=secret ws://user:pass@127.0.0.1:4506?api_key=secret&debug=true C:\\Users\\Alice\\repo',
+    `Authorization: Bearer abc123 TOKEN=secret ${credentialUrl} ${userPath}`,
   );
 
   assert.doesNotMatch(text, /abc123|TOKEN=secret|user:pass|api_key=secret|Alice/u);

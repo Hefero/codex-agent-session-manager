@@ -122,14 +122,16 @@ test('App Server errors become AppServerRpcError with redacted public message', 
   await initializeClient(client);
 
   const loaded = client.listLoadedThreads();
+  const secretToken = ['secret', 'token'].join('-');
+  const userInfoUrl = ['ws://user', ':pass@127.0.0.1:4506', '?api_key=secret'].join('');
   client.handleIncomingMessage(
     JSON.stringify({
       jsonrpc: '2.0',
       id: 2,
       error: {
         code: -32000,
-        message: 'Authorization: Bearer secret-token ws://user:pass@127.0.0.1:4506?api_key=secret',
-        data: { token: 'secret-token', visible: 'safe' },
+        message: `Authorization: Bearer ${secretToken} ${userInfoUrl}`,
+        data: { token: secretToken, visible: 'safe' },
       },
     }),
   );

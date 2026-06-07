@@ -5,7 +5,7 @@ Use this when starting a new Codex remote session for this repo.
 ```text
 Goal:
 Continue building codex-agent-session-manager in
-C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager.
+<workspace>.
 
 Context:
 - This is the clean TypeScript extraction from codex-mcp-hot-reloader.
@@ -31,6 +31,7 @@ Current foundation:
 - Durable operation resource: codex-session-manager://operations.
 - Runtime operation state: .codex-agent-session-manager/state/operations.json.
 - Workspace cwd guardrails reject lexical and symlink/junction escapes.
+- Security scripts: security:smoke, security:scan, audit:prod.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
 
 Important docs:
@@ -46,6 +47,9 @@ Validation already expected:
 - npm test
 - npm run smoke
 - npm run build
+- npm run security:smoke
+- npm run security:scan
+- npm run audit:prod
 
 Next likely work:
 1. Continue Phase 6 probes. Windows hidden stdio launcher remains explicitly

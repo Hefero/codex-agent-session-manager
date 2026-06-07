@@ -137,10 +137,10 @@ The AppBuilder MCP ecosystem already converged on TypeScript, Zod, shared tool
 definitions, typed MCP results, runtime readbacks, and evidence-first workflow.
 Relevant local references:
 
-- `C:\Users\Guilherme\Documents\Claude\Jitterbit-driver\AGENTS.md`
-- `C:\Users\Guilherme\Documents\Claude\appbuilder-mcp-common\docs\architecture\README.md`
-- `C:\Users\Guilherme\Documents\Claude\appbuilder-mcp-common\docs\architecture\agent-operating-model.md`
-- `C:\Users\Guilherme\Documents\Claude\appbuilder-mcp-common\src\tool-definition.ts`
+- `<local-jitterbit-workspace>/AGENTS.md`
+- `<local-appbuilder-common>/docs/architecture/README.md`
+- `<local-appbuilder-common>/docs/architecture/agent-operating-model.md`
+- `<local-appbuilder-common>/src/tool-definition.ts`
 
 Useful patterns:
 
@@ -306,4 +306,3 @@ Use the official MCP SDK directly, Zod schemas, typed App Server client
 wrappers, explicit operation state, and MCP resources for logs/evidence. Keep
 FastMCP, MCP Framework, `mcp-codex-worker`, and `codex-gateway` as references,
 not foundations.
-

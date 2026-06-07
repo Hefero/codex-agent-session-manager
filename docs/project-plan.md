@@ -278,8 +278,8 @@ Port only the parts that survive the new architecture:
 
 Do not copy the old code shape blindly.
 
-Status: cwd guardrails and read-only App Server state promoted; Windows
-launcher still probe-gated.
+Status: cwd guardrails, read-only App Server state, and security scan patterns
+promoted; Windows launcher still probe-gated.
 
 Implemented:
 
@@ -295,6 +295,11 @@ Implemented:
 - App Server URL resolution state is now centralized in typed state helpers and
   still supports legacy `.codex-mcp-hot-reloader` state for bootstrap
   compatibility.
+- `security:scan`, `security:smoke`, and `audit:prod` are available for release
+  hygiene.
+- The security scan checks tracked files for personal paths, local workspace
+  paths, concrete UUID-style thread/app ids, common credential shapes, and App
+  Server URLs with credentials/path/query/fragment, while redacting findings.
 
 Validation:
 
@@ -309,6 +314,9 @@ Validation:
 - A fresh proof turn called `codex_app_server_state_read`; it returned
   `resolved.source: legacy-state`, `resolved.url: ws://127.0.0.1:57798`,
   primary state absent, legacy state present, and workspace paths redacted.
+- `npm run security:smoke`
+- `npm run security:scan`
+- `npm run audit:prod`
 
 Still gated by Decision 3 probes:
 

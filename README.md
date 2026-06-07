@@ -54,6 +54,9 @@ npm run check
 npm test
 npm run smoke
 npm run build
+npm run security:smoke
+npm run security:scan
+npm run audit:prod
 ```
 
 Start the MCP server:

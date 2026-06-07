@@ -29,6 +29,9 @@ npm run check
 npm test
 npm run smoke
 npm run build
+npm run security:smoke
+npm run security:scan
+npm run audit:prod
 ```
 
 ## Documentation Map
@@ -40,4 +43,3 @@ npm run build
 - `docs/mcp-typescript-architecture-research.md`: pre-scaffold stack research.
 - `docs/research/hot-reloader-origin-notes.md`: lessons carried from the
   experimental repo.
-

@@ -10,7 +10,7 @@ successor to `codex-mcp-hot-reloader`.
 The old repo is frozen as a reference. Work in this repo:
 
 ```text
-C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
+<workspace>
 ```
 
 ## Current State
@@ -41,6 +41,7 @@ Implemented:
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
 - Workspace cwd guardrails for tools that accept `cwd`.
+- Security scripts `security:smoke`, `security:scan`, and `audit:prod`.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
 - Initial docs and ADRs.
@@ -67,6 +68,9 @@ npm test
 npm run smoke
 npm run build
 node dist/cli.js --version
+npm run security:smoke
+npm run security:scan
+npm run audit:prod
 git diff --check
 ```
 
@@ -202,7 +206,7 @@ External App Server reload and fresh-turn callable proof also passed:
 
 ```text
 codex_session_continue callable: true
-operationId: 88131a2f-2056-4873-ad5f-91d92d933fcf
+operationId: <operation-id>
 background scheduled: true
 operation status: completed
 ready.ok: true
@@ -285,6 +289,16 @@ states count: 2
 primary exists: false
 legacy exists: true
 raw workspace path omitted/redacted: true
+```
+
+## Latest Phase 6 Security Evidence
+
+Security scan patterns were promoted:
+
+```text
+npm run security:smoke: pass
+npm run security:scan: pass, scannedFiles: 53
+npm run audit:prod: pass, found 0 vulnerabilities
 ```
 
 ## Bootstrap Rule

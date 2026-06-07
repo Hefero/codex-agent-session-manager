@@ -21,6 +21,9 @@
     "check": "tsc --noEmit",
     "serve": "node --import tsx src/cli.ts serve",
     "smoke": "node --import tsx scripts/smoke.ts",
+    "security:scan": "node --import tsx scripts/security-scan.ts",
+    "security:smoke": "node --import tsx scripts/smoke-security-scan.ts",
+    "audit:prod": "npm audit --omit=dev",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {

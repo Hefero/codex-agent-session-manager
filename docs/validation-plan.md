@@ -9,6 +9,9 @@ npm run check
 npm test
 npm run smoke
 npm run build
+npm run security:smoke
+npm run security:scan
+npm run audit:prod
 ```
 
 The smoke must prove:
@@ -72,6 +75,11 @@ Current read-only checks:
 - refuse real remote TUI replacement unless `dryRun:false` and `confirm:true`;
 - compose replacement from explicit-thread close plus same-thread launch while
   keeping App Server lifecycle start separate.
+- run a security smoke proving scan patterns fail on representative leaks
+  without printing raw sensitive fixtures;
+- scan tracked files for personal paths, workspace paths, UUID-style thread/app
+  ids, common credentials, and unsafe App Server URL shapes;
+- run production dependency audit.
 
 ## Callable Catalog Proof Matrix
 

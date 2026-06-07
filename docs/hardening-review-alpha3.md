@@ -181,6 +181,24 @@ The fix adds explicit deinit opt-ins for scratch workspaces:
 - `--remove-empty-codex-dir` removes `.codex/` only when the directory is
   empty.
 
+### H-010: package validation commands could race when parallelized
+
+Status: fixed in working tree for alpha.3.
+
+The package validation scripts both rebuild `dist/`. During one validation
+pass, running `pack:dry-run` and `pack:smoke` concurrently caused a transient
+Windows filesystem error while one process cleaned `dist/` and another was
+using it.
+
+The fix adds a single sequential package validation entrypoint:
+
+```text
+npm run pack:validate
+```
+
+Docs now point release checks at `pack:validate` and call out that individual
+pack scripts should not be parallelized.
+
 ## Accepted / Deferred Risks
 
 ### D-001: custom `OperationStore({ stateFile })` is intentionally unbounded
@@ -188,6 +206,17 @@ The fix adds explicit deinit opt-ins for scratch workspaces:
 The default operation store path is workspace-bounded. A custom `stateFile`
 option remains unbounded for tests and internal diagnostics. It is not exposed
 as a public MCP input.
+
+### D-002: operator-created terminal wrappers remain operator-owned
+
+The managed session cleanup tools target Codex remote TUI processes and keep
+App Server lifecycle separate. They intentionally do not kill arbitrary
+terminal wrappers created outside the tool, such as a manual
+`powershell -NoExit` used by a test harness to keep a window open.
+
+After a managed cleanup, the operator may still need to close that wrapper
+window manually. Broadly killing wrapper terminals would risk crossing the
+safe session/process ownership boundary.
 
 ## Validation
 
@@ -199,8 +228,7 @@ Current working-tree validation for this hardening pass:
 - `npm run security:smoke`
 - `npm run security:scan`
 - `npm run audit:prod`
-- `npm run pack:dry-run`
-- `npm run pack:smoke`
+- `npm run pack:validate`
 
 Full alpha.3 release validation should also run after the version bump:
 

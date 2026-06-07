@@ -43,7 +43,8 @@ Current foundation:
 - Project init writes project-scoped `.codex/config.toml`, local runtime ignore
   rules, package scripts when `package.json` exists, and an `AGENTS.md` block
   unless `--no-agents` is used.
-- Package hardening scripts: npm run pack:dry-run and npm run pack:smoke.
+- Package hardening script: npm run pack:validate. Do not parallelize
+  pack:dry-run and pack:smoke because both rebuild dist.
 - Security scripts: security:smoke, security:scan, audit:prod.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
 

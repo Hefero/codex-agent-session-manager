@@ -48,7 +48,8 @@ Implemented:
 - Repo-local remote launcher through `npm run remote`; it uses primary
   `.codex-agent-session-manager` state and ignores legacy hot-reloader state.
 - Security scripts `security:smoke`, `security:scan`, and `audit:prod`.
-- Package hardening scripts `pack:dry-run` and `pack:smoke`.
+- Package hardening script `pack:validate`, which runs package smoke and pack
+  dry-run sequentially.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
 - Initial docs and ADRs.
@@ -83,8 +84,7 @@ node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
 node --import tsx src/cli.ts --help
 node --import tsx src/cli.ts mcp --help
 node --import tsx src/cli.ts app-server start --dry-run --port 4566
-npm run pack:dry-run
-npm run pack:smoke
+npm run pack:validate
 git diff --check
 ```
 
@@ -407,8 +407,7 @@ application to a target project, idempotency, missing package.json, and
 Package/install hardening is promoted:
 
 ```text
-npm run pack:dry-run
-npm run pack:smoke
+npm run pack:validate
 ```
 
 Pack smoke behavior:
@@ -426,6 +425,9 @@ runs npm run codex:remote:dry-run in the target project
 
 Automated smoke intentionally stops at remote dry-run. Real TUI launch remains
 an operator-visible manual probe.
+
+Do not run `pack:dry-run` and `pack:smoke` concurrently; both rebuild `dist/`.
+Use `pack:validate` for release/package validation.
 
 ## Bootstrap Rule
 

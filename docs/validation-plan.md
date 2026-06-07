@@ -20,9 +20,11 @@ node --import tsx src/cli.ts mcp --help
 node --import tsx src/cli.ts mcp add npm @modelcontextprotocol/server-everything --dry-run
 node --import tsx src/cli.ts app-server start --dry-run --port 4566
 node --import tsx src/cli.ts session launch --dry-run --url ws://127.0.0.1:4566 --thread-id <thread-id>
-npm run pack:dry-run
-npm run pack:smoke
+npm run pack:validate
 ```
+
+Do not run `pack:dry-run` and `pack:smoke` concurrently. Both rebuild `dist/`;
+`pack:validate` keeps that package validation path sequential.
 
 The smoke must prove:
 
@@ -180,6 +182,11 @@ Record separately:
 - whether `/mcp` opens extra cmd/conhost windows;
 - whether `.codex/config.toml` is using the hidden stdio launcher or direct
   `node` for the MCP server.
+
+If the probe uses an external wrapper such as `powershell -NoExit` to keep a
+test window open, close that wrapper manually after managed cleanup. Session
+cleanup targets Codex remote TUI processes, not arbitrary operator terminal
+wrappers.
 
 ## Callable Catalog Proof Matrix
 

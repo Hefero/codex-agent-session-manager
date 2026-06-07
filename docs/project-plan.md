@@ -515,6 +515,8 @@ Implemented:
 
 - `npm run pack:dry-run`.
 - `npm run pack:smoke`.
+- `npm run pack:validate` runs package smoke and dry-run sequentially so
+  multiple package validations do not rebuild `dist/` at the same time.
 - `scripts/pack-smoke.ts` builds a tarball in a temporary directory, validates
   package contents, installs it into a temporary target project, runs installed
   `dist/cli.js`, runs `init --dry-run`, runs real `init`, validates generated
@@ -532,8 +534,7 @@ Implemented:
 
 Validation:
 
-- `npm run pack:dry-run`
-- `npm run pack:smoke`
+- `npm run pack:validate`
 - Pack smoke proves installed CLI version, project init, generated scripts,
   project-scoped MCP config, runtime ignore rule, managed `AGENTS.md` block,
   and installed `codex:remote:dry-run`.

@@ -167,9 +167,11 @@ npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
 node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
-npm run pack:dry-run
-npm run pack:smoke
+npm run pack:validate
 ```
+
+`pack:validate` runs package smoke and npm pack dry-run sequentially. The pack
+scripts rebuild `dist/`, so do not run them in parallel.
 
 Start the MCP server:
 
@@ -210,6 +212,11 @@ session launch as separate operations. Agents can inspect the managed process
 with `codex_app_server_status` and stop only the workspace-owned App Server
 tree with `codex_app_server_stop`; neither operation rewrites user global MCP
 configuration.
+
+`codex_session_close` targets Codex remote TUI processes. It does not own
+operator-created terminal wrappers such as a manual `powershell -NoExit`
+launcher used during experiments; close those windows separately after the
+managed remote/App Server cleanup is complete.
 
 ## Documentation
 

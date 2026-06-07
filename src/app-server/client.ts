@@ -116,6 +116,10 @@ export class AppServerJsonRpcClient {
     return this.request('thread/read', input);
   }
 
+  async reloadMcpServers(): Promise<unknown> {
+    return this.request('config/mcpServer/reload', undefined);
+  }
+
   async listMcpServerStatuses(input: {
     threadId: string;
     detail?: McpServerStatusDetail;

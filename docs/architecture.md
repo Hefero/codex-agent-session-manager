@@ -1,6 +1,6 @@
 # Architecture
 
-Status: Phase 4 preflight
+Status: Phase 4 reload
 Date: 2026-06-06
 
 ## Thesis
@@ -98,11 +98,11 @@ The current MCP surface exposes:
 - `codex_thread_context`
 - `codex_operation_read`
 - `codex_operation_wait`
+- `codex_mcp_reload`
 - `codex-session-manager://operations`
 
 Planned next tools:
 
-- `codex_mcp_reload`
 - `codex_session_continue`
 - `codex_session_launch`
 - `codex_session_close`
@@ -122,6 +122,18 @@ Phase 3 proved an important boundary:
 This reinforces the validation rule: `mcpServerStatus/list` is diagnostic, and
 final MCP proof requires an actual model-callable invocation at the correct
 turn/session boundary.
+
+Phase 4 reload proof added the first mutating operation:
+
+- `codex_mcp_reload` schedules `config/mcpServer/reload` in a detached child
+  process.
+- The parent tool returns a durable operation id before reload can restart MCP
+  server processes.
+- The child records `background`, `statusBefore`, `reload`, and `statusAfter`
+  evidence in the operation store.
+- Replacement/fresh remote proof called `codex_mcp_reload`, then
+  `codex_operation_wait`/`codex_operation_read`, and observed a completed
+  operation with before/after status evidence.
 
 ## Boundaries
 

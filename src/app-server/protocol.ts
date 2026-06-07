@@ -119,6 +119,10 @@ export interface AppServerRequestMap {
     params: AppServerInitializeParams;
     result: unknown;
   };
+  'config/mcpServer/reload': {
+    params: undefined;
+    result: unknown;
+  };
   'thread/loaded/list': {
     params: Record<string, never>;
     result: AppServerPage<string>;

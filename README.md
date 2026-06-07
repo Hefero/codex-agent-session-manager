@@ -32,6 +32,7 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_thread_context`
   - `codex_operation_read`
   - `codex_operation_wait`
+  - `codex_mcp_reload`
 - Durable operation resource: `codex-session-manager://operations`.
 - Raw JSON-RPC smoke test for MCP initialization, tool listing, tool call, and
   resource listing.

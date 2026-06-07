@@ -15,6 +15,7 @@ import {
   operationWaitInputSchema,
 } from './tools/operations.js';
 import { buildProbePayload, probeInputSchema } from './tools/probe.js';
+import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
 import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
 import { packageName, packageVersion } from './version.js';
 
@@ -165,6 +166,28 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = await buildOperationWaitPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_mcp_reload',
+    {
+      title: 'Reload Codex MCP Servers',
+      description: 'Schedule a Codex App Server MCP reload as a durable operation. Callable proof still requires a later tool call from the right turn/session boundary.',
+      inputSchema: mcpReloadInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const payload = buildMcpReloadPayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

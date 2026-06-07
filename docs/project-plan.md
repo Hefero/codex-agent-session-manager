@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 4 preflight complete; MCP reload next
+Status: Phase 4 reload complete; continuation next
 
 ## Bootstrap Workflow
 
@@ -133,7 +133,7 @@ Exit criteria:
 - Handler/schema/new-tool fixture probes pass by continuation.
 - Same-turn stale behavior is recorded as diagnostic, not pass.
 
-Status: preflight complete; reload and continuation not started.
+Status: reload complete; continuation not started.
 
 Implemented:
 
@@ -143,6 +143,12 @@ Implemented:
 - Operation reads and waits reload state from disk, so an active MCP server can
   observe updates written by another process.
 - Writes use temp-file plus rename.
+- `codex_mcp_reload` creates a durable `mcp_reload` operation and schedules a
+  detached child process.
+- The hidden internal CLI command runs the reload child without shell, with
+  ignored stdio, detached process mode, and `windowsHide`.
+- The child calls `config/mcpServer/reload` and records optional
+  status-before/status-after evidence when a `threadId` is provided.
 
 Validation:
 
@@ -159,6 +165,20 @@ Validation:
   then read/waited that operation successfully:
   `read found true/status completed`, `wait found true/completed true/timedOut
   false`.
+- Unit tests cover App Server reload request shape, reload operation scheduling,
+  child runner completion with fake client/status, and operation argv parsing.
+- App Server status listed `codex_mcp_reload`.
+- Same-thread reload plus continuation still saw stale callable state for the
+  new reload tool.
+- Replacement/fresh remote TUI called `codex_mcp_reload`; the returned
+  operation completed and retained `background`, `statusBefore`, and
+  `statusAfter` evidence.
+
+Remaining in Phase 4:
+
+- `codex_session_continue`;
+- operation evidence for idle/stable wait and `turn/start`;
+- final flow tying reload plus continuation proof together.
 
 ## Phase 5: Session Launch, Close, Replace
 

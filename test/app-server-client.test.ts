@@ -76,6 +76,21 @@ test('listLoadedThreads resolves by matching JSON-RPC response id', async () => 
   });
 });
 
+test('reloadMcpServers sends config/mcpServer/reload without params', async () => {
+  const { client, connection } = createClient();
+  await initializeClient(client);
+
+  const reload = client.reloadMcpServers();
+  assert.deepEqual(connection.sent[2], {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'config/mcpServer/reload',
+  });
+
+  client.handleIncomingMessage(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { queued: true } }));
+  assert.deepEqual(await reload, { queued: true });
+});
+
 test('App Server errors become AppServerRpcError with redacted public message', async () => {
   const { client } = createClient();
   await initializeClient(client);

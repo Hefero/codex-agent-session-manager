@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { startStdioServer } from './mcp-server.js';
+import { runMcpReloadOperationFromArgv } from './tools/reload.js';
 import { packageName, packageVersion } from './version.js';
 
 function printHelp(): void {
@@ -33,10 +34,14 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === 'run-mcp-reload-operation') {
+    await runMcpReloadOperationFromArgv(argv.slice(1));
+    return;
+  }
+
   process.stderr.write(`Unknown command: ${command}\n`);
   printHelp();
   process.exitCode = 2;
 }
 
 await main(process.argv.slice(2));
-

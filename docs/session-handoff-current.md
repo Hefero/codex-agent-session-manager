@@ -15,9 +15,9 @@ C:\Users\Guilherme\Documents\Claude\codex-agent-session-manager
 
 ## Current State
 
-Phases 1, 2, and 3 are implemented and validated. Phase 4 preflight for
-durable operation state is implemented and validated; check `git log` and
-`git status` for the latest commit state.
+Phases 1, 2, and 3 are implemented and validated. Phase 4 now has durable
+operation state and `codex_mcp_reload`; check `git log` and `git status` for
+the latest commit state.
 
 Implemented:
 
@@ -30,6 +30,7 @@ Implemented:
 - Read-only tools `codex_threads_list` and `codex_mcp_status_list`.
 - Read-only thread recommendation tool `codex_thread_context`.
 - Operation tools `codex_operation_read` and `codex_operation_wait`.
+- Reload tool `codex_mcp_reload`.
 - Resource `codex-session-manager://operations`.
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
@@ -136,6 +137,27 @@ codex_operation_wait:
   timedOut false: true
 ```
 
+## Latest Phase 4 Reload Evidence
+
+`codex_mcp_reload` was validated by replacement proof after App Server status
+listed the tool but same-thread continuation remained stale:
+
+```text
+callable: true
+background scheduled: true
+final operation status: completed
+evidence.background exists: true
+evidence.statusBefore exists: true
+evidence.statusAfter exists: true
+final nextAction mentions continuation/fresh proof: true
+```
+
+Readback from durable operation state confirmed the final operation retained:
+
+```text
+requested, background, statusBefore, reload, statusAfter
+```
+
 ## Bootstrap Rule
 
 Until Phase 4 minimum exists, this session is a dogfood worker, not the primary
@@ -149,10 +171,9 @@ available, and report whether they are callable.
 
 1. Inspect the scaffold and current git status.
 2. Continue Phase 4 with:
-   - `codex_mcp_reload`;
    - `codex_session_continue`;
-   - operation evidence for reload/status/continuation;
-   - fresh-turn callable proof.
+   - operation evidence for idle/stable wait and `turn/start`;
+   - fresh-turn callable proof after reload.
 3. Keep all future session-manager tools small, typed, and explicitly guarded.
 
 ## Do Not Do

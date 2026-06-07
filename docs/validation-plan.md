@@ -55,6 +55,8 @@ The smoke must prove:
   `dryRun:false, confirm:true`.
 - Real CLI/MCP `mcp add npm` execution suppresses npm lifecycle scripts unless
   `--allow-scripts` / `allowScripts:true` is explicitly selected.
+- Real CLI/MCP `mcp add npm` execution reports installed package lifecycle
+  scripts and warns when they were suppressed.
 - CLI App Server start dry-run emits JSON with `dryRun:true` and the requested
   loopback URL.
 - CLI init dry-run emits human-readable output for a temporary workspace

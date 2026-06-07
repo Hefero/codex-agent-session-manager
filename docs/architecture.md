@@ -175,6 +175,9 @@ Phase 10 package bootstrap adds an agent-facing npm MCP installer:
 - npm install runs with `--ignore-scripts` by default. `allowScripts: true`
   or CLI `--allow-scripts` is an explicit opt-in for packages that require
   lifecycle scripts.
+- After a real install, the tool inspects the installed package metadata and
+  reports declared lifecycle scripts plus whether they were suppressed by the
+  default safe install mode.
 - The generated server command uses `node` plus the installed package
   entrypoint instead of npm command shims.
 - Existing unmanaged `[mcp_servers.<name>]` sections are not overwritten.

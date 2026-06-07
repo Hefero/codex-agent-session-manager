@@ -125,7 +125,9 @@ explicit opt-in:
 - CLI flag: `--allow-scripts`
 
 Dry-run evidence now shows the selected install command and reports whether
-lifecycle scripts are allowed.
+lifecycle scripts are allowed. Real install output also reports lifecycle
+scripts declared by the installed package and warns when they were suppressed
+by the default `--ignore-scripts` mode.
 
 ### H-007: project teardown did not surface live process lifecycle clearly
 

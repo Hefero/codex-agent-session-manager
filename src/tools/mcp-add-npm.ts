@@ -72,6 +72,7 @@ interface McpAddNpmAction {
 interface PackageInfo {
   packageName: string;
   entrypoint: string;
+  lifecycleScripts: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -200,6 +201,21 @@ function firstBinTarget(value: unknown): string | null {
   return entries[0]?.[1] ?? null;
 }
 
+function installedPackageLifecycleScripts(value: unknown): string[] {
+  if (!isRecord(value)) return [];
+  const scripts = isRecord(value.scripts) ? value.scripts : {};
+  const lifecycleScriptNames = [
+    'preinstall',
+    'install',
+    'postinstall',
+    'prepublish',
+    'preprepare',
+    'prepare',
+    'postprepare',
+  ];
+  return lifecycleScriptNames.filter((name) => typeof scripts[name] === 'string');
+}
+
 function resolveInstalledPackage(input: { workspace: string; packageName: string; entrypoint?: string | undefined }): PackageInfo {
   const packageJsonPath = packageJsonPathFor(input.workspace, input.packageName);
   if (!existsSync(packageJsonPath)) {
@@ -217,6 +233,7 @@ function resolveInstalledPackage(input: { workspace: string; packageName: string
   return {
     packageName: input.packageName,
     entrypoint: validatePackageEntrypoint(binTarget),
+    lifecycleScripts: installedPackageLifecycleScripts(parsed),
   };
 }
 
@@ -371,6 +388,7 @@ export function buildMcpAddNpmPayload(
     packageName,
     entrypoint: parsed.entrypoint,
   });
+  const lifecycleScriptsSuppressed = packageInfo.lifecycleScripts.length > 0 && !allowScripts;
 
   const configNext = upsertMcpAddConfig(
     configCurrent,
@@ -398,6 +416,8 @@ export function buildMcpAddNpmPayload(
     packageName,
     serverName,
     lifecycleScriptsAllowed: allowScripts,
+    packageLifecycleScripts: packageInfo.lifecycleScripts,
+    lifecycleScriptsSuppressed,
     command: 'node',
     args: [`node_modules/${packageInfo.packageName}/${packageInfo.entrypoint}`, ...extraArgs],
     actions,
@@ -406,6 +426,11 @@ export function buildMcpAddNpmPayload(
       stdoutIncluded: npmResult.stdout.length > 0,
       stderrIncluded: npmResult.stderr.length > 0,
     },
+    warnings: lifecycleScriptsSuppressed
+      ? [
+        'The installed package declares npm lifecycle scripts, but this install used --ignore-scripts. If the MCP server fails because generated or native assets are missing, rerun with allowScripts:true only after reviewing the package.',
+      ]
+      : [],
     nextAction: `Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${serverName}.`,
   };
 }

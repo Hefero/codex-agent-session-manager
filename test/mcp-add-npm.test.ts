@@ -20,7 +20,7 @@ function withCwd<T>(cwd: string, fn: () => T): T {
   }
 }
 
-function fakeInstallPackage(packageName: string, bin: string): NpmRunner {
+function fakeInstallPackage(packageName: string, bin: string, scripts: Record<string, string> = {}): NpmRunner {
   return (_args, options) => {
     const packageRoot = join(options.cwd, 'node_modules', ...packageName.split('/'));
     mkdirSync(packageRoot, { recursive: true });
@@ -31,6 +31,7 @@ function fakeInstallPackage(packageName: string, bin: string): NpmRunner {
         version: '1.0.0',
         type: 'module',
         bin: { 'mcp-server-example': bin },
+        scripts,
       }, null, 2)}\n`,
     );
     return { status: 0, stdout: 'installed', stderr: '' };
@@ -129,6 +130,33 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
       private?: boolean;
     };
     assert.equal(packageJson.private, true);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('mcp add npm reports package lifecycle scripts suppressed by default', () => {
+  const workspace = tempWorkspace();
+  try {
+    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+      {
+        packageSpec: '@wonderwhy-er/desktop-commander',
+        serverName: 'desktop_commander',
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        npmRunner: fakeInstallPackage('@wonderwhy-er/desktop-commander', 'dist/index.js', {
+          postinstall: 'node dist/track-installation.js',
+          prepare: 'npm run build',
+        }),
+      },
+    ));
+
+    assert.equal(payload.lifecycleScriptsAllowed, false);
+    assert.deepEqual(payload.packageLifecycleScripts, ['postinstall', 'prepare']);
+    assert.equal(payload.lifecycleScriptsSuppressed, true);
+    assert.match(JSON.stringify(payload.warnings), /--ignore-scripts/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

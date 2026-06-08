@@ -43,9 +43,11 @@ small `AGENTS.md` block unless `--no-agents` is passed. It does not edit the
 user's global Codex config.
 
 After upgrading this package in an existing project, rerun
-`npx codex-agent-session-manager init` or `npm run codex:init` to refresh the
-managed `AGENTS.md`, `.gitignore`, package scripts, and MCP config block. The
-init operation is idempotent and project-scoped.
+`npx codex-agent-session-manager init` to refresh the managed `AGENTS.md`,
+`.gitignore`, package scripts, and MCP config block. If the binary is installed
+globally or linked on PATH, `codex-agent-session-manager init` is equivalent.
+If the project already has the generated npm scripts, `npm run codex:init` is
+also equivalent. The init operation is idempotent and project-scoped.
 
 Remove from a project:
 

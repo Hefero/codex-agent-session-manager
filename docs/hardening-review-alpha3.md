@@ -1,6 +1,6 @@
 # Alpha 3 Hardening Review
 
-Date: 2026-06-07
+Date: 2026-06-07 to 2026-06-08
 
 This review focuses on public-alpha hardening after the first npm release. The
 goal is not to remove all sharp edges, but to make project-scoped filesystem
@@ -238,6 +238,27 @@ custom scripts remain. `.codex/` cleanup now also considers files that the same
 deinit plan will delete, so a directory containing only a managed
 `config.toml` can be removed with `--remove-empty-codex-dir`.
 
+### H-013: public CLI ignored unrelated flags and extra arguments
+
+Status: fixed in working tree for alpha.3.
+
+The public CLI parser collected flags globally, but each subcommand only read
+the options it cared about. That meant unrelated boolean flags such as
+`--allow-scripts` on `session close`, or extra positional arguments after
+`mcp add npm <package>`, could be silently ignored. In a CLI with guarded
+mutating operations, silently ignored input is a release-contract bug: an
+operator typo should fail before any `--confirm` operation is scheduled.
+
+The fix validates allowed flags and extra positionals per public subcommand:
+
+- App Server lifecycle commands only accept their own lifecycle flags.
+- `mcp add npm` rejects extra package arguments and flags from `mcp refresh`.
+- `mcp refresh` rejects installer flags such as `--server-name`.
+- Session launch/close/replace reject flags from unrelated session or MCP
+  flows.
+
+Tests now cover ignored cross-command flags and extra positionals.
+
 ## Accepted / Deferred Risks
 
 ### D-001: custom `OperationStore({ stateFile })` is intentionally unbounded
@@ -280,6 +301,8 @@ Current working-tree validation for this hardening pass:
 - `npm run security:scan`
 - `npm run audit:prod`
 - `npm run pack:validate`
+- public CLI parser rejects ignored cross-command flags and extra positionals
+  before scheduling guarded operations.
 
 External alpha.3 env/auth probe:
 

@@ -552,6 +552,8 @@ Validation:
   remaining packages are the session manager and managed npm MCP installs.
   `.codex/` cleanup accounts for config files that the same deinit plan will
   delete.
+- Public CLI subcommands now reject ignored cross-command flags and extra
+  positionals before scheduling guarded operations.
 - Follow-up finding: Windows `session launch` recorded a successful launch
   operation but did not leave a loaded App Server thread in the Tavily replay.
   Treat that as a session-launch hardening item, separate from the npm/env MCP

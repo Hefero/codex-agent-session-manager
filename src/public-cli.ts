@@ -141,6 +141,21 @@ function numberFlag(flags: Map<string, string[]>, name: string): number | undefi
   return parsed;
 }
 
+function assertAllowedFlags(flags: Map<string, string[]>, allowed: readonly string[], commandLabel: string): void {
+  const allowedSet = new Set([...allowed, 'help']);
+  for (const name of flags.keys()) {
+    if (!allowedSet.has(name)) {
+      throw new Error(`Unknown option for ${commandLabel}: --${name}`);
+    }
+  }
+}
+
+function assertNoExtraPositionals(rest: readonly string[], commandLabel: string): void {
+  if (rest.length > 0) {
+    throw new Error(`Unexpected argument for ${commandLabel}: ${rest[0] ?? '<missing>'}`);
+  }
+}
+
 function optionalPrompt(flags: Map<string, string[]>): string | undefined {
   const prompt = stringFlag(flags, 'prompt');
   const promptFile = stringFlag(flags, 'prompt-file');
@@ -190,8 +205,10 @@ function requireString(flags: Map<string, string[]>, name: string): string {
   return value;
 }
 
-function appServerCommand(subcommand: string, flags: Map<string, string[]>): ParsedPublicCommand {
+function appServerCommand(subcommand: string, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
   if (subcommand === 'start') {
+    assertNoExtraPositionals(rest, 'app-server start');
+    assertAllowedFlags(flags, ['url', 'host', 'port', 'enable-image-generation', 'dry-run', 'confirm'], 'app-server start');
     const input: Record<string, unknown> = {};
     addOptional(input, 'appServerUrl', stringFlag(flags, 'url'));
     addOptional(input, 'host', stringFlag(flags, 'host'));
@@ -202,6 +219,8 @@ function appServerCommand(subcommand: string, flags: Map<string, string[]>): Par
   }
 
   if (subcommand === 'status') {
+    assertNoExtraPositionals(rest, 'app-server status');
+    assertAllowedFlags(flags, ['probe-ready', 'no-probe-ready', 'no-process-tree', 'ready-timeout-ms'], 'app-server status');
     const input: Record<string, unknown> = {};
     if (hasFlag(flags, 'probe-ready')) input.probeReady = true;
     if (hasFlag(flags, 'no-probe-ready')) input.probeReady = false;
@@ -211,6 +230,8 @@ function appServerCommand(subcommand: string, flags: Map<string, string[]>): Par
   }
 
   if (subcommand === 'stop') {
+    assertNoExtraPositionals(rest, 'app-server stop');
+    assertAllowedFlags(flags, ['dry-run', 'confirm', 'timeout-ms', 'delay-ms'], 'app-server stop');
     const input: Record<string, unknown> = {};
     addDryRunConfirm(input, flags);
     addOptional(input, 'timeoutMs', numberFlag(flags, 'timeout-ms'));
@@ -223,9 +244,11 @@ function appServerCommand(subcommand: string, flags: Map<string, string[]>): Par
 
 function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
   if (subcommand === 'add') {
-    const [provider, packageSpec] = rest;
+    assertAllowedFlags(flags, ['server-name', 'entrypoint', 'arg', 'no-default-stdio-arg', 'env-var', 'allow-scripts', 'dry-run', 'confirm'], 'mcp add npm');
+    const [provider, packageSpec, extra] = rest;
     if (provider !== 'npm') throw new Error(`Unknown mcp add provider: ${provider ?? '<missing>'}`);
     if (packageSpec === undefined || packageSpec.length === 0) throw new Error('mcp add npm requires a package spec.');
+    if (extra !== undefined) throw new Error(`Unexpected argument for mcp add npm: ${extra}`);
     const input: Record<string, unknown> = { packageSpec };
     addOptional(input, 'serverName', stringFlag(flags, 'server-name'));
     addOptional(input, 'entrypoint', stringFlag(flags, 'entrypoint'));
@@ -240,6 +263,8 @@ function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: read
   }
 
   if (subcommand !== 'refresh') throw new Error(`Unknown mcp subcommand: ${subcommand}`);
+  assertNoExtraPositionals(rest, 'mcp refresh');
+  assertAllowedFlags(flags, ['url', 'thread-id', 'prompt', 'prompt-file', 'highlight-tool', 'timeout-ms', 'continuation-timeout-ms', 'continuation-poll-ms', 'continuation-stable-ms'], 'mcp refresh');
   const input: Record<string, unknown> = {
     threadId: requireString(flags, 'thread-id'),
   };
@@ -267,12 +292,16 @@ function sessionLaunchInput(flags: Map<string, string[]>): Record<string, unknow
   return input;
 }
 
-function sessionCommand(subcommand: string, flags: Map<string, string[]>): ParsedPublicCommand {
+function sessionCommand(subcommand: string, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
   if (subcommand === 'launch') {
+    assertNoExtraPositionals(rest, 'session launch');
+    assertAllowedFlags(flags, ['url', 'thread-id', 'prompt', 'prompt-file', 'mode', 'resume-last', 'pick', 'bypass-sandbox', 'enable-image-generation', 'timeout-ms', 'dry-run', 'confirm'], 'session launch');
     return { command: 'session', subcommand, input: sessionLaunchInput(flags) };
   }
 
   if (subcommand === 'close') {
+    assertNoExtraPositionals(rest, 'session close');
+    assertAllowedFlags(flags, ['url', 'thread-id', 'allow-workspace-url-fallback', 'timeout-ms', 'delay-ms', 'dry-run', 'confirm'], 'session close');
     const input: Record<string, unknown> = {
       threadId: requireString(flags, 'thread-id'),
     };
@@ -285,6 +314,8 @@ function sessionCommand(subcommand: string, flags: Map<string, string[]>): Parse
   }
 
   if (subcommand === 'replace') {
+    assertNoExtraPositionals(rest, 'session replace');
+    assertAllowedFlags(flags, ['url', 'thread-id', 'prompt', 'prompt-file', 'bypass-sandbox', 'enable-image-generation', 'timeout-ms', 'delay-ms', 'dry-run', 'confirm'], 'session replace');
     const input: Record<string, unknown> = {
       threadId: requireString(flags, 'thread-id'),
     };
@@ -314,9 +345,9 @@ export function parsePublicCommand(argv: readonly string[]): ParsedPublicCommand
   }
   if (subcommand === undefined) throw new Error(`${command} requires a subcommand.`);
 
-  if (command === 'app-server') return appServerCommand(subcommand, parsed.flags);
+  if (command === 'app-server') return appServerCommand(subcommand, parsed.flags, rest);
   if (command === 'mcp') return mcpCommand(subcommand, parsed.flags, rest);
-  if (command === 'session') return sessionCommand(subcommand, parsed.flags);
+  if (command === 'session') return sessionCommand(subcommand, parsed.flags, rest);
   throw new Error(`Unknown public command: ${command}`);
 }
 

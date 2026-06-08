@@ -52,6 +52,8 @@ The smoke must prove:
 - `resources/list` includes `codex-session-manager://operations`.
 - CLI help lists the public App Server, MCP refresh, and session commands.
 - CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
+- CLI public subcommands reject ignored cross-command flags and extra
+  positionals before scheduling any guarded operation.
 - CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
   writing files and shows `--ignore-scripts` by default.
 - CLI/MCP `mcp add npm` supports secret-bearing MCPs through `env_vars` /

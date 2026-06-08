@@ -172,6 +172,33 @@ test('parsePublicCommand maps session commands', () => {
   });
 });
 
+test('parsePublicCommand rejects ignored public CLI flags and extra positionals', () => {
+  assert.throws(
+    () => parsePublicCommand(['session', 'close', '--thread-id', 'thread-a', '--allow-scripts', '--confirm']),
+    /Unknown option for session close: --allow-scripts/u,
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['app-server', 'status', '--confirm']),
+    /Unknown option for app-server status: --confirm/u,
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'add', 'npm', 'tavily-mcp', 'extra']),
+    /Unexpected argument for mcp add npm: extra/u,
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['session', 'launch', 'extra', '--dry-run']),
+    /Unexpected argument for session launch: extra/u,
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'refresh', '--thread-id', 'thread-a', '--server-name', 'wrong']),
+    /Unknown option for mcp refresh: --server-name/u,
+  );
+});
+
 test('parsePublicCommand reads prompt files only from the current workspace', () => {
   const workspace = tempWorkspace();
   const outside = tempWorkspace('codex-agent-session-manager-public-cli-outside-');

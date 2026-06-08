@@ -312,7 +312,7 @@ right wrapper root.
 
 ### H-015: OAuth/write-capable MCP flow needed stronger agent guardrails
 
-Status: fixed in working tree for alpha.3.
+Status: fixed after alpha.3; release target alpha.4.
 
 A Google Drive MCP replay with user-scoped OAuth credentials validated the
 functional path: the agent started from the official read-only package, the
@@ -339,7 +339,7 @@ tool invocation.
 
 ### H-016: direct-launched stdio MCPs can leave authenticated node windows
 
-Status: fixed in working tree for alpha.3.
+Status: fixed after alpha.3; release target alpha.4.
 
 The same Google Drive replay left several visible `node.exe` windows showing
 the official server message `Credentials loaded. Starting server.` Those
@@ -390,6 +390,6 @@ External alpha.3 env/auth probe:
   uninstalled `tavily-mcp` and `codex-agent-session-manager`, removed empty npm
   remnants, and left the scratch workspace empty.
 
-Full alpha.3 release validation should also run after the version bump:
+Full alpha.4 release validation should also run after the version bump:
 
 - `npm publish --dry-run --tag alpha`

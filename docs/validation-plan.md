@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: alpha.3 workspace, prompt, and package/install hardening implemented
+Status: alpha.4 OAuth/env and stdio direct-launch hardening implemented
 
 ## Scaffold Checks
 

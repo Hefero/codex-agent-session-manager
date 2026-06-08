@@ -169,7 +169,10 @@ files outside the workspace or under ignored paths such as `.secrets/`, and do
 not patch installed files under `node_modules`. If an environment variable was
 created or changed after the managed App Server started, restart or relaunch
 that App Server before `mcp refresh`; `.codex/config.toml` stores only variable
-names, not values.
+names, not values. Do not validate by launching stdio MCP entrypoints in a
+visible terminal; stdio servers stay alive waiting for a client and can leave
+orphan `node`/`cmd` windows. Use App Server refresh plus a real callable tool
+call as proof.
 
 ## Development
 

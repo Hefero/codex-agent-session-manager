@@ -337,6 +337,25 @@ read-only first, write/delete scopes only after operator approval, no
 claim until a continuation or replacement turn performs a real callable MCP
 tool invocation.
 
+### H-016: direct-launched stdio MCPs can leave authenticated node windows
+
+Status: fixed in working tree for alpha.3.
+
+The same Google Drive replay left several visible `node.exe` windows showing
+the official server message `Credentials loaded. Starting server.` Those
+processes were not the active App Server-managed wrapper; they were stale
+direct launches of the official stdio MCP entrypoint from earlier diagnostic
+attempts. A stdio MCP server is expected to remain alive waiting for a client,
+so repeatedly launching it in visible terminals creates orphan windows and can
+keep an authenticated process running longer than intended.
+
+The fix adds generated `AGENTS.md` guidance and `mcp add npm` next-action
+guidance telling agents not to validate by launching stdio MCP entrypoints in
+visible terminals. Callable proof should come from App Server refresh plus a
+real model-callable tool invocation. If direct stdio diagnostics are truly
+needed, they should be run with an explicit timeout/process handle and cleaned
+up before the agent claims success.
+
 ## Validation
 
 Current working-tree validation for this hardening pass:

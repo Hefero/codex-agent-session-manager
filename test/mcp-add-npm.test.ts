@@ -161,6 +161,8 @@ test('mcp add npm can forward env var names and omit default stdio arg', () => {
     assert.match(JSON.stringify(payload.warnings), /OAuth, PII, write-capable, or destructive MCPs/u);
     assert.match(String(payload.nextAction), /restart or relaunch the managed App Server/u);
     assert.match(String(payload.nextAction), /do not stop at MCP status alone/u);
+    assert.match(String(payload.nextAction), /do not prove by launching the stdio entrypoint/u);
+    assert.match(String(payload.nextAction), /orphan node\/cmd windows/u);
 
     const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
     assert.match(config, /\[mcp_servers\.tavily_search\]/u);

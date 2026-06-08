@@ -266,6 +266,9 @@ For OAuth, PII, write-capable, or destructive MCPs:
   after explicit operator approval.
 - Do not patch files under \`node_modules\`. If an MCP package needs different
   behavior, create a project-local wrapper or a dedicated package.
+- Do not validate by launching stdio MCP entrypoints in a visible terminal.
+  Stdio MCP servers are long-lived and can leave orphan node/cmd windows.
+  Prefer App Server refresh plus a real model-callable tool call.
 - Keep OAuth client files, tokens, and API keys outside the workspace or under
   ignored paths such as \`.secrets/\`. Do not print sensitive values.
 - If env vars were created or changed after App Server started, restart or

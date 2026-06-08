@@ -276,7 +276,7 @@ function nextActionFor(input: { serverName: string; envVars: string[]; dryRun: b
   const envStep = input.envVars.length > 0
     ? ' Ensure the named env vars are visible to the App Server process; restart or relaunch the managed App Server first if they were just created or changed.'
     : '';
-  return `${installStep}${envStep} Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${input.serverName}; do not stop at MCP status alone.`.trim();
+  return `${installStep}${envStep} Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${input.serverName}; do not stop at MCP status alone, and do not prove by launching the stdio entrypoint in a visible terminal because it can leave orphan node/cmd windows.`.trim();
 }
 
 function mcpServerBlock(input: { serverName: string; packageName: string; entrypoint: string; extraArgs: string[]; envVars: string[] }): string {

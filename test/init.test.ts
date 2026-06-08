@@ -105,6 +105,8 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.match(agents, /mcp add npm <package-spec>/u);
     assert.match(agents, /Prefer read-only scopes first/u);
     assert.match(agents, /Do not patch files under `node_modules`/u);
+    assert.match(agents, /Do not validate by launching stdio MCP entrypoints/u);
+    assert.match(agents, /orphan node\/cmd windows/u);
     assert.match(agents, /If env vars were created or changed after App Server started/u);
     assert.match(agents, /keep using `codex-agent-session-manager mcp refresh --thread-id <thread-id>`/u);
     assert.match(agents, /Direct MCP SDK calls\s+are diagnostic only/u);

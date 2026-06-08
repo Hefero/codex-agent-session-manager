@@ -63,8 +63,9 @@ The smoke must prove:
   or a reviewed wrapper before refresh.
 - Generated `AGENTS.md` instructs agents to prefer read-only OAuth scopes
   first, require explicit operator approval for write/delete scopes, avoid
-  patching `node_modules`, and continue through refresh/replacement until a
-  real callable MCP tool call proves the change.
+  patching `node_modules`, avoid visible direct-launch validation of stdio MCP
+  entrypoints, and continue through refresh/replacement until a real callable
+  MCP tool call proves the change.
 - CLI/MCP `mcp add npm` can omit the default positional `"stdio"` argument for
   packages that default to stdio.
 - Real CLI/MCP `mcp add npm` execution requires `--confirm` or
@@ -167,7 +168,8 @@ Current checks:
   start from read-only when possible, only move to read/write after explicit
   operator instruction, keep token/client files outside the workspace or under
   ignored paths, avoid editing `node_modules`, refresh/relaunch as needed, and
-  prove the final tool through the model-callable catalog.
+  prove the final tool through the model-callable catalog. Confirm no stale
+  visible stdio MCP server windows remain from direct diagnostic launches.
 - Windows `session launch` proof must assert App Server loaded-thread state,
   not only process-spawn success. For `mode=session`, verify the requested
   `threadId` appears in `thread/loaded/list`; for `mode=fresh` with a prompt,

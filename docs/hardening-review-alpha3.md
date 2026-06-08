@@ -238,6 +238,18 @@ After a managed cleanup, the operator may still need to close that wrapper
 window manually. Broadly killing wrapper terminals would risk crossing the
 safe session/process ownership boundary.
 
+### D-003: Windows `session launch` proof needs a durable TUI assertion
+
+The Tavily env/auth replay scheduled `codex-agent-session-manager session
+launch` against a workspace App Server and the operation recorded
+`launched.ok: true`, but App Server `thread/loaded/list` still returned no
+loaded threads afterward. The same Tavily MCP configuration was then proven
+callable through a fresh `codex exec` process in the same workspace.
+
+This means the package/install/env path is valid, but Windows visible-TUI
+launch needs a stronger post-launch assertion or a different terminal wrapper
+strategy before it can be treated as final proof for remote-session creation.
+
 ## Validation
 
 Current working-tree validation for this hardening pass:
@@ -250,11 +262,20 @@ Current working-tree validation for this hardening pass:
 - `npm run audit:prod`
 - `npm run pack:validate`
 
-Pending external alpha.3 probe:
+External alpha.3 env/auth probe:
 
-- Tavily MCP env/auth install using `TAVILY_API_KEY` supplied by the operator's
-  launch environment, followed by MCP refresh, callable tool proof, cleanup,
-  and token/key rotation if desired.
+- Tavily MCP installed from a local package tarball into `codex-managed-test`
+  with `--env-var TAVILY_API_KEY` and `--no-default-stdio-arg`.
+- `.codex/config.toml` contained `env_vars = ["TAVILY_API_KEY"]` and did not
+  contain the API key value.
+- Tavily declared a `prepare` lifecycle script; install used `--ignore-scripts`
+  and the published `build/index.js` entrypoint was still present.
+- Fresh `codex exec` proof in the initialized project started
+  `tavily_search/tavily_search`, returned two search results, and reported that
+  no API key value was printed or stored.
+- Managed cleanup stopped the workspace App Server, removed scaffold/config,
+  uninstalled `tavily-mcp` and `codex-agent-session-manager`, removed empty npm
+  remnants, and left the scratch workspace empty.
 
 Full alpha.3 release validation should also run after the version bump:
 

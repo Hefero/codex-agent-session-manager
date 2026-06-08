@@ -149,6 +149,11 @@ Current checks:
   set the required API key only in the remote-launch environment, install with
   `--env-var`, refresh MCP, call one read-only tool, then deinit/uninstall and
   revoke or rotate the test key.
+- Tavily replay evidence for alpha.3 used fresh `codex exec` as callable
+  proof after Windows `session launch` recorded `launched.ok:true` but did not
+  leave a loaded App Server thread. Future session-launch validation should
+  assert that a new thread is actually loaded, not only that `Start-Process`
+  returned success.
 - keep public CLI operation output JSON by default and preserve
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.

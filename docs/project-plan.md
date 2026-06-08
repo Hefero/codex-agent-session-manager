@@ -542,5 +542,12 @@ Validation:
 - Pack smoke proves installed CLI version, project init, generated scripts,
   project-scoped MCP config, runtime ignore rule, managed `AGENTS.md` block,
   and installed `codex:remote:dry-run`.
-- External env/auth validation target: Tavily MCP with `TAVILY_API_KEY`,
-  project-scoped `env_vars`, MCP refresh, callable proof, and managed cleanup.
+- External env/auth validation passed with Tavily MCP:
+  `TAVILY_API_KEY` was forwarded through project-scoped `env_vars`, the secret
+  value was not written to config, fresh `codex exec` called
+  `tavily_search/tavily_search`, and managed cleanup left the scratch workspace
+  empty.
+- Follow-up finding: Windows `session launch` recorded a successful launch
+  operation but did not leave a loaded App Server thread in the Tavily replay.
+  Treat that as a session-launch hardening item, separate from the npm/env MCP
+  install proof.

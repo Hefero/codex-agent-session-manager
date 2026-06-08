@@ -107,6 +107,39 @@ test('parsePublicCommand maps mcp add npm', () => {
   );
 });
 
+test('parsePublicCommand maps mcp add npm env vars and empty extra args', () => {
+  assert.deepEqual(
+    parsePublicCommand([
+      'mcp',
+      'add',
+      'npm',
+      'tavily-mcp@latest',
+      '--server-name',
+      'tavily_search',
+      '--env-var',
+      'TAVILY_API_KEY',
+      '--no-default-stdio-arg',
+      '--dry-run',
+    ]),
+    {
+      command: 'mcp',
+      subcommand: 'add-npm',
+      input: {
+        packageSpec: 'tavily-mcp@latest',
+        serverName: 'tavily_search',
+        extraArgs: [],
+        envVars: ['TAVILY_API_KEY'],
+        dryRun: true,
+      },
+    },
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'add', 'npm', 'tavily-mcp', '--arg', 'stdio', '--no-default-stdio-arg']),
+    /either --arg or --no-default-stdio-arg/u,
+  );
+});
+
 test('parsePublicCommand maps session commands', () => {
   assert.deepEqual(parsePublicCommand(['session', 'launch', '--thread-id', 'thread-a', '--confirm', '--bypass-sandbox']), {
     command: 'session',

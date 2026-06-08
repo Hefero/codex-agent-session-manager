@@ -120,6 +120,7 @@ codex-agent-session-manager app-server stop --dry-run
 
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --dry-run
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything --confirm
+codex-agent-session-manager mcp add npm tavily-mcp@latest --server-name tavily_search --env-var TAVILY_API_KEY --no-default-stdio-arg --confirm
 codex-agent-session-manager mcp refresh --thread-id <thread-id>
 
 codex-agent-session-manager session launch --thread-id <thread-id> --dry-run
@@ -153,6 +154,11 @@ package requires npm lifecycle scripts during install. After a real install,
 the result reports lifecycle scripts declared by the package and warns when
 they were suppressed. The install does not count as callable proof; run
 `mcp refresh` and validate with a real tool call from the continuation.
+Use repeated `--env-var <NAME>` for secret-bearing MCPs; this writes
+`env_vars = ["NAME"]` and forwards the variable from the launch environment
+without storing the secret value in TOML. Use `--no-default-stdio-arg` for npm
+MCP packages whose entrypoint defaults to stdio and should not receive a
+positional `"stdio"` argument.
 
 ## Development
 

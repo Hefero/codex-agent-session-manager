@@ -50,6 +50,9 @@ Implemented:
 - Security scripts `security:smoke`, `security:scan`, and `audit:prod`.
 - Package hardening script `pack:validate`, which runs package smoke and pack
   dry-run sequentially.
+- Env/auth npm MCP hardening target: Tavily MCP with `--env-var
+  TAVILY_API_KEY` and `--no-default-stdio-arg`. Never store secret values in
+  TOML.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
 - Initial docs and ADRs.
@@ -428,6 +431,11 @@ an operator-visible manual probe.
 
 Do not run `pack:dry-run` and `pack:smoke` concurrently; both rebuild `dist/`.
 Use `pack:validate` for release/package validation.
+
+Next external package probe is Tavily MCP: operator supplies `TAVILY_API_KEY`
+only in the launch environment, the installer writes `env_vars`, MCP refresh
+starts a continuation, and the proof turn calls a Tavily search tool before
+managed cleanup.
 
 ## Bootstrap Rule
 

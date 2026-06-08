@@ -45,6 +45,8 @@ Current foundation:
   unless `--no-agents` is used.
 - Package hardening script: npm run pack:validate. Do not parallelize
   pack:dry-run and pack:smoke because both rebuild dist.
+- Env/auth npm MCP hardening target: Tavily MCP with --env-var TAVILY_API_KEY
+  and --no-default-stdio-arg. Never store secret values in TOML.
 - Security scripts: security:smoke, security:scan, audit:prod.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
 

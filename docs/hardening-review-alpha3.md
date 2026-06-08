@@ -199,6 +199,26 @@ npm run pack:validate
 Docs now point release checks at `pack:validate` and call out that individual
 pack scripts should not be parallelized.
 
+### H-011: npm MCP installer could not configure env/auth MCPs safely
+
+Status: fixed in working tree for alpha.3.
+
+The next realistic package-install probe needs an MCP server that requires an
+API key. Before this pass, `mcp add npm` could install a package and write
+`command`/`args`, but it could not write Codex `env_vars`. That forced either
+manual TOML edits or storing secret values directly in project config.
+
+The fix adds:
+
+- MCP input `envVars`;
+- CLI flag `--env-var <NAME>`;
+- env var name validation and deduplication;
+- config output using `env_vars = ["NAME"]`, never literal secret values.
+
+The CLI also adds `--no-default-stdio-arg` for npm MCP packages whose entrypoint
+defaults to stdio and should not receive a positional `"stdio"` argument. This
+keeps the Tavily MCP probe inside the managed installer flow.
+
 ## Accepted / Deferred Risks
 
 ### D-001: custom `OperationStore({ stateFile })` is intentionally unbounded
@@ -229,6 +249,12 @@ Current working-tree validation for this hardening pass:
 - `npm run security:scan`
 - `npm run audit:prod`
 - `npm run pack:validate`
+
+Pending external alpha.3 probe:
+
+- Tavily MCP env/auth install using `TAVILY_API_KEY` supplied by the operator's
+  launch environment, followed by MCP refresh, callable tool proof, cleanup,
+  and token/key rotation if desired.
 
 Full alpha.3 release validation should also run after the version bump:
 

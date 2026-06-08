@@ -241,6 +241,9 @@ Useful commands:
 - \`npm run codex:remote:dry-run\`
 - \`${packageName} mcp add npm <package-spec> --dry-run\`
 - \`${packageName} mcp add npm <package-spec> --confirm\`
+- \`${packageName} mcp add npm <package-spec> --env-var <NAME> --confirm\`
+  for secret-bearing MCPs; this forwards env var names without storing secret
+  values in project config.
 - \`${packageName} mcp refresh --thread-id <thread-id>\`
 
 Treat App Server MCP status as diagnostic. Validate MCP changes with a real

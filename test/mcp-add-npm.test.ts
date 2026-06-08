@@ -135,6 +135,53 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
   }
 });
 
+test('mcp add npm can forward env var names and omit default stdio arg', () => {
+  const workspace = tempWorkspace();
+  try {
+    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+      {
+        packageSpec: 'tavily-mcp@latest',
+        serverName: 'tavily_search',
+        extraArgs: [],
+        envVars: ['TAVILY_API_KEY', 'TAVILY_API_KEY'],
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        npmRunner: fakeInstallPackage('tavily-mcp', 'build/index.js'),
+      },
+    ));
+
+    assert.equal(payload.ok, true);
+    assert.deepEqual(payload.args, ['node_modules/tavily-mcp/build/index.js']);
+    assert.deepEqual(payload.envVars, ['TAVILY_API_KEY']);
+    assert.doesNotMatch(JSON.stringify(payload), /secret/u);
+
+    const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
+    assert.match(config, /\[mcp_servers\.tavily_search\]/u);
+    assert.match(config, /args = \["node_modules\/tavily-mcp\/build\/index\.js"\]/u);
+    assert.match(config, /env_vars = \["TAVILY_API_KEY"\]/u);
+    assert.doesNotMatch(config, /BRAVE|secret|token-value/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('mcp add npm rejects invalid env var names', () => {
+  const workspace = tempWorkspace();
+  try {
+    assert.throws(
+      () => withCwd(workspace, () => buildMcpAddNpmPayload({
+        packageSpec: 'tavily-mcp',
+        envVars: ['TAVILY-API-KEY'],
+      })),
+      /Invalid|Environment variable/u,
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('mcp add npm reports package lifecycle scripts suppressed by default', () => {
   const workspace = tempWorkspace();
   try {

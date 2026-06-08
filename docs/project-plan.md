@@ -521,6 +521,10 @@ Implemented:
   package contents, installs it into a temporary target project, runs installed
   `dist/cli.js`, runs `init --dry-run`, runs real `init`, validates generated
   files, and runs `npm run codex:remote:dry-run`.
+- `mcp add npm` supports `envVars` / `--env-var` for secret-bearing stdio MCPs
+  without writing secret values into project config.
+- `mcp add npm` supports empty extra args / `--no-default-stdio-arg` for
+  packages that default to stdio without a positional transport argument.
 - Package content validation requires:
   - `package.json`
   - `README.md`
@@ -538,3 +542,5 @@ Validation:
 - Pack smoke proves installed CLI version, project init, generated scripts,
   project-scoped MCP config, runtime ignore rule, managed `AGENTS.md` block,
   and installed `codex:remote:dry-run`.
+- External env/auth validation target: Tavily MCP with `TAVILY_API_KEY`,
+  project-scoped `env_vars`, MCP refresh, callable proof, and managed cleanup.

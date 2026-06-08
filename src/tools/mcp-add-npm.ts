@@ -12,6 +12,7 @@ const CONFIG_MARKER_END = '# END codex-agent-session-manager:mcp-add';
 const MAX_PACKAGE_SPEC_CHARS = 200;
 const MAX_ENTRYPOINT_CHARS = 300;
 const MAX_EXTRA_ARGS = 20;
+const MAX_ENV_VARS = 20;
 
 const packageSpecSchema = z
   .string()
@@ -28,6 +29,12 @@ const serverNameSchema = z
   .regex(/^[A-Za-z0-9_-]+$/u)
   .describe('Project-scoped Codex MCP server name to add under .codex/config.toml.');
 
+const envVarNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/u)
+  .describe('Environment variable name to forward to the MCP stdio server without storing its value in config.');
+
 export const mcpAddNpmInputSchema = {
   packageSpec: packageSpecSchema,
   serverName: serverNameSchema.optional(),
@@ -42,6 +49,11 @@ export const mcpAddNpmInputSchema = {
     .max(MAX_EXTRA_ARGS)
     .optional()
     .describe('Extra args passed after the package entrypoint. Defaults to ["stdio"].'),
+  envVars: z
+    .array(envVarNameSchema)
+    .max(MAX_ENV_VARS)
+    .optional()
+    .describe('Environment variable names to forward through config env_vars without storing secret values.'),
   allowScripts: z
     .boolean()
     .optional()
@@ -241,13 +253,20 @@ function jsonString(value: string): string {
   return JSON.stringify(value);
 }
 
-function mcpServerBlock(input: { serverName: string; packageName: string; entrypoint: string; extraArgs: string[] }): string {
+function uniqueSorted(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+function mcpServerBlock(input: { serverName: string; packageName: string; entrypoint: string; extraArgs: string[]; envVars: string[] }): string {
   const nodeModulesPath = `node_modules/${input.packageName}/${input.entrypoint}`.replace(/\\/gu, '/');
   const args = [nodeModulesPath, ...input.extraArgs];
+  const envVarsLine = input.envVars.length > 0
+    ? `\nenv_vars = [${input.envVars.map((name) => jsonString(name)).join(', ')}]`
+    : '';
   return `${CONFIG_MARKER_PREFIX}${input.serverName}
 [mcp_servers.${input.serverName}]
 command = "node"
-args = [${args.map((arg) => jsonString(arg)).join(', ')}]
+args = [${args.map((arg) => jsonString(arg)).join(', ')}]${envVarsLine}
 ${CONFIG_MARKER_END}`;
 }
 
@@ -311,6 +330,7 @@ export function buildMcpAddNpmPayload(
   const confirm = parsed.confirm === true;
   const allowScripts = parsed.allowScripts === true;
   const extraArgs = parsed.extraArgs ?? [DEFAULT_TRANSPORT_ARG];
+  const envVars = uniqueSorted(parsed.envVars ?? []);
   const installArgs = npmInstallArgs({ packageSpec: parsed.packageSpec, allowScripts });
   const actions: McpAddNpmAction[] = [];
   const configPath = workspacePath(workspace, '.codex', 'config.toml');
@@ -343,6 +363,7 @@ export function buildMcpAddNpmPayload(
       packageSpec: parsed.packageSpec,
       packageName,
       serverName,
+      envVars,
       lifecycleScriptsAllowed: allowScripts,
       actions,
       nextAction: 'Run with dryRun:false and confirm:true, then call codex_mcp_refresh with an explicit threadId and let the current turn finish so the continuation can call the new MCP tool.',
@@ -364,6 +385,7 @@ export function buildMcpAddNpmPayload(
       packageSpec: parsed.packageSpec,
       packageName,
       serverName,
+      envVars,
       lifecycleScriptsAllowed: allowScripts,
       actions,
       message: 'Pass confirm:true with dryRun:false to install an npm MCP package and update project config.',
@@ -398,6 +420,7 @@ export function buildMcpAddNpmPayload(
       packageName: packageInfo.packageName,
       entrypoint: packageInfo.entrypoint,
       extraArgs,
+      envVars,
     }),
   );
   actions.push(actionForFile(configPath, configCurrent, configNext, workspace, 'register project-scoped Codex MCP server'));
@@ -415,6 +438,7 @@ export function buildMcpAddNpmPayload(
     packageSpec: parsed.packageSpec,
     packageName,
     serverName,
+    envVars,
     lifecycleScriptsAllowed: allowScripts,
     packageLifecycleScripts: packageInfo.lifecycleScripts,
     lifecycleScriptsSuppressed,

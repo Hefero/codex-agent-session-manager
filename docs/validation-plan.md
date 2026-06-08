@@ -18,6 +18,7 @@ node --import tsx src/cli.ts deinit --workspace .
 node --import tsx src/cli.ts --help
 node --import tsx src/cli.ts mcp --help
 node --import tsx src/cli.ts mcp add npm @modelcontextprotocol/server-everything --dry-run
+node --import tsx src/cli.ts mcp add npm tavily-mcp@latest --server-name tavily_search --env-var TAVILY_API_KEY --no-default-stdio-arg --dry-run
 node --import tsx src/cli.ts app-server start --dry-run --port 4566
 node --import tsx src/cli.ts session launch --dry-run --url ws://127.0.0.1:4566 --thread-id <thread-id>
 npm run pack:validate
@@ -53,6 +54,10 @@ The smoke must prove:
 - CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
 - CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
   writing files and shows `--ignore-scripts` by default.
+- CLI/MCP `mcp add npm` supports secret-bearing MCPs through `env_vars` /
+  `--env-var` without storing secret values in `.codex/config.toml`.
+- CLI/MCP `mcp add npm` can omit the default positional `"stdio"` argument for
+  packages that default to stdio.
 - Real CLI/MCP `mcp add npm` execution requires `--confirm` or
   `dryRun:false, confirm:true`.
 - Real CLI/MCP `mcp add npm` execution suppresses npm lifecycle scripts unless
@@ -140,6 +145,10 @@ Current checks:
 - expose an agent-facing npm MCP installer that writes project-scoped
   `.codex/config.toml` blocks without editing user global Codex config and
   without running npm lifecycle scripts by default.
+- validate an env/auth npm MCP install with Tavily or another low-risk service:
+  set the required API key only in the remote-launch environment, install with
+  `--env-var`, refresh MCP, call one read-only tool, then deinit/uninstall and
+  revoke or rotate the test key.
 - keep public CLI operation output JSON by default and preserve
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.

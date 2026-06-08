@@ -21,6 +21,7 @@ const booleanFlags = new Set([
   'enable-image-generation',
   'help',
   'json',
+  'no-default-stdio-arg',
   'no-process-tree',
   'no-probe-ready',
   'pick',
@@ -70,7 +71,8 @@ App Server:
 
 MCP:
   add npm: --server-name <name> --entrypoint <package-relative-js>
-           --arg <value> --dry-run --confirm --allow-scripts
+           --arg <value> --no-default-stdio-arg --env-var <name>
+           --dry-run --confirm --allow-scripts
   refresh: --highlight-tool <name> --continuation-timeout-ms <ms>
            --continuation-poll-ms <ms> --continuation-stable-ms <ms>
 
@@ -227,7 +229,11 @@ function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: read
     const input: Record<string, unknown> = { packageSpec };
     addOptional(input, 'serverName', stringFlag(flags, 'server-name'));
     addOptional(input, 'entrypoint', stringFlag(flags, 'entrypoint'));
-    addOptional(input, 'extraArgs', stringListFlag(flags, 'arg'));
+    if (hasFlag(flags, 'no-default-stdio-arg') && hasFlag(flags, 'arg')) {
+      throw new Error('Use either --arg or --no-default-stdio-arg, not both.');
+    }
+    addOptional(input, 'extraArgs', hasFlag(flags, 'no-default-stdio-arg') ? [] : stringListFlag(flags, 'arg'));
+    addOptional(input, 'envVars', stringListFlag(flags, 'env-var'));
     if (hasFlag(flags, 'allow-scripts')) input.allowScripts = true;
     addDryRunConfirm(input, flags);
     return { command: 'mcp', subcommand: 'add-npm', input };

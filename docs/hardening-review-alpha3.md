@@ -278,17 +278,37 @@ After a managed cleanup, the operator may still need to close that wrapper
 window manually. Broadly killing wrapper terminals would risk crossing the
 safe session/process ownership boundary.
 
-### D-003: Windows `session launch` proof needs a durable TUI assertion
+### H-014: Windows `session launch` accepted weak detached-TUI proof
+
+Status: fixed in working tree for alpha.3.
 
 The Tavily env/auth replay scheduled `codex-agent-session-manager session
 launch` against a workspace App Server and the operation recorded
 `launched.ok: true`, but App Server `thread/loaded/list` still returned no
-loaded threads afterward. The same Tavily MCP configuration was then proven
-callable through a fresh `codex exec` process in the same workspace.
+loaded threads afterward. Investigation reproduced the bug in a disposable
+Windows workspace: direct `Start-Process` of the native `codex.exe` returned
+success but did not leave a remote TUI or loaded thread.
 
-This means the package/install/env path is valid, but Windows visible-TUI
-launch needs a stronger post-launch assertion or a different terminal wrapper
-strategy before it can be treated as final proof for remote-session creation.
+Root cause: the native Windows Codex TUI requires a real terminal. The hidden
+App Server path should keep using the native binary, but the visible detached
+TUI path needs a terminal shell wrapper. `session launch` and `session replace`
+now resolve the Windows detached-TUI command to the npm `codex.cmd` shim and
+launch it through `cmd.exe /c`, producing the observed
+`cmd.exe -> node.exe -> codex.exe` remote-TUI process tree.
+
+`session launch` also records a post-launch App Server assertion when the
+expected thread is deterministic:
+
+- `mode=session`: wait until the requested `threadId` appears in
+  `thread/loaded/list`.
+- `mode=fresh` with a prompt: wait until a new loaded thread appears compared
+  with the pre-launch baseline.
+
+If that assertion is required and times out, the operation now fails with
+`SessionLaunchVerificationFailed` instead of completing on process-spawn
+evidence alone. Cleanup matching now climbs through the Windows
+`cmd.exe -> node.exe -> codex.exe` shim tree so `session close` can stop the
+right wrapper root.
 
 ## Validation
 
@@ -303,6 +323,11 @@ Current working-tree validation for this hardening pass:
 - `npm run pack:validate`
 - public CLI parser rejects ignored cross-command flags and extra positionals
   before scheduling guarded operations.
+- Windows detached `session launch` was replayed against a disposable loopback
+  workspace App Server: launch evidence used `windows-cmd-shim-terminal`,
+  `launchVerification.ok` was `true`, `launchVerification.strategy` was
+  `fresh-prompt-new-thread`, and `codex_thread_context` found the marker
+  response in the loaded thread.
 
 External alpha.3 env/auth probe:
 

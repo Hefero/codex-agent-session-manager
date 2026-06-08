@@ -554,7 +554,7 @@ Validation:
   delete.
 - Public CLI subcommands now reject ignored cross-command flags and extra
   positionals before scheduling guarded operations.
-- Follow-up finding: Windows `session launch` recorded a successful launch
-  operation but did not leave a loaded App Server thread in the Tavily replay.
-  Treat that as a session-launch hardening item, separate from the npm/env MCP
-  install proof.
+- Windows detached `session launch` now uses the npm `codex.cmd` terminal shim
+  through `cmd.exe /c` instead of launching native `codex.exe` directly, and
+  records App Server loaded-thread verification before completing deterministic
+  launch operations.

@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 
+import { connectAppServerClient } from '../app-server/client.js';
 import { resolveAppServerUrl } from '../app-server/config.js';
 import { redactArgv, redactSensitiveText, redactValue } from '../security/redaction.js';
 import { resolveWorkspaceRoot } from '../security/workspace.js';
@@ -70,15 +71,32 @@ export interface LaunchPlan {
 
 export interface LaunchExecutionResult {
   ok: boolean;
-  mode: 'windows-detached-terminal' | 'detached-process' | 'fake';
+  mode: 'windows-cmd-shim-terminal' | 'windows-detached-terminal' | 'detached-process' | 'fake';
   pid?: number | null;
   exitCode?: number | null;
   stdout?: string;
   stderr?: string;
 }
 
+export interface LaunchVerificationResult {
+  attempted: boolean;
+  required: boolean;
+  ok: boolean;
+  strategy: 'session-thread-loaded' | 'fresh-prompt-new-thread' | 'skipped';
+  timeoutMs: number;
+  beforeLoadedCount?: number;
+  afterLoadedCount?: number;
+  matchedThreadId?: string | null;
+  reason?: string;
+}
+
 export type SessionLaunchScheduler = (input: SessionLaunchOperationInput, prompt: string | null) => SessionLaunchBackgroundEvidence;
 export type LaunchExecutor = (plan: LaunchPlan) => LaunchExecutionResult | Promise<LaunchExecutionResult>;
+export type LaunchVerifier = (input: {
+  plan: LaunchPlan;
+  timeoutMs: number;
+  beforeLoadedThreadIds: readonly string[] | null;
+}) => Promise<LaunchVerificationResult>;
 
 function publicFailure(error: unknown, promptToRedact?: string | null): unknown {
   const prompt = promptToRedact ?? '';
@@ -135,12 +153,16 @@ function nativeWindowsCodexCandidates(commandDir: string): string[] {
   return candidates;
 }
 
+function windowsCodexCommands(): string[] {
+  const result = spawnSync('where.exe', ['codex'], { encoding: 'utf8', windowsHide: true });
+  return result.status === 0
+    ? result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
+    : [];
+}
+
 export function resolveCodexCommand(): string {
   if (process.platform === 'win32') {
-    const result = spawnSync('where.exe', ['codex'], { encoding: 'utf8', windowsHide: true });
-    const commands = result.status === 0
-      ? result.stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
-      : [];
+    const commands = windowsCodexCommands();
     const nativeFromShim = commands
       .flatMap((command) => nativeWindowsCodexCandidates(dirname(command)))
       .find((candidate) => existsSync(candidate));
@@ -154,6 +176,16 @@ export function resolveCodexCommand(): string {
 
   const result = spawnSync('sh', ['-lc', 'command -v codex'], { encoding: 'utf8' });
   return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : 'codex';
+}
+
+export function resolveCodexDetachedTerminalCommand(): string {
+  if (process.platform === 'win32') {
+    const commands = windowsCodexCommands();
+    return commands.find((command) => /\.cmd$/iu.test(command))
+      ?? commands.find((command) => !/\.[^\\/]+$/u.test(command))
+      ?? resolveCodexCommand();
+  }
+  return resolveCodexCommand();
 }
 
 function resolveLaunchMode(input: { mode?: LaunchMode | undefined; threadId?: string | undefined }): LaunchMode {
@@ -386,14 +418,117 @@ function psArrayLiteral(values: readonly string[]): string {
   return `@(${values.map(psQuote).join(',')})`;
 }
 
+function cmdQuote(value: string): string {
+  return `"${value.replace(/"/gu, '""')}"`;
+}
+
+function cmdWrappedCommandLine(command: string, args: readonly string[]): string {
+  return `"${[command, ...args].map(cmdQuote).join(' ')}"`;
+}
+
+async function loadedThreadIds(appServerUrl: string, timeoutMs: number): Promise<string[]> {
+  const client = await connectAppServerClient({ url: appServerUrl, requestTimeoutMs: Math.min(timeoutMs, 10_000) });
+  try {
+    await client.initialize();
+    return (await client.listLoadedThreads()).threadIds;
+  } finally {
+    client.close();
+  }
+}
+
+function verificationRequirement(plan: LaunchPlan): Pick<LaunchVerificationResult, 'required' | 'strategy' | 'reason'> {
+  if (plan.mode === 'session') {
+    return { required: true, strategy: 'session-thread-loaded' };
+  }
+  if (plan.mode === 'fresh' && plan.promptIncluded) {
+    return { required: true, strategy: 'fresh-prompt-new-thread' };
+  }
+  return {
+    required: false,
+    strategy: 'skipped',
+    reason: 'Launch mode has no deterministic loaded-thread assertion.',
+  };
+}
+
+export async function verifyLaunchLoadedThread(input: {
+  plan: LaunchPlan;
+  timeoutMs: number;
+  beforeLoadedThreadIds: readonly string[] | null;
+}): Promise<LaunchVerificationResult> {
+  const requirement = verificationRequirement(input.plan);
+  const timeoutMs = input.timeoutMs;
+  if (!requirement.required) {
+    return {
+      attempted: false,
+      required: false,
+      ok: true,
+      strategy: requirement.strategy,
+      timeoutMs,
+      reason: requirement.reason ?? 'Launch verification skipped.',
+    };
+  }
+
+  const beforeLoadedThreadIds = input.beforeLoadedThreadIds ?? [];
+  const beforeSet = new Set(beforeLoadedThreadIds);
+  const deadline = Date.now() + timeoutMs;
+  let lastLoadedThreadIds: string[] = [];
+
+  do {
+    lastLoadedThreadIds = await loadedThreadIds(input.plan.appServerUrl, timeoutMs);
+    if (input.plan.mode === 'session') {
+      const expectedThreadId = input.plan.args[1] ?? null;
+      if (expectedThreadId !== null && lastLoadedThreadIds.includes(expectedThreadId)) {
+        return {
+          attempted: true,
+          required: true,
+          ok: true,
+          strategy: requirement.strategy,
+          timeoutMs,
+          beforeLoadedCount: beforeLoadedThreadIds.length,
+          afterLoadedCount: lastLoadedThreadIds.length,
+          matchedThreadId: expectedThreadId,
+        };
+      }
+    } else {
+      const newThreadId = lastLoadedThreadIds.find((threadId) => !beforeSet.has(threadId));
+      if (newThreadId !== undefined) {
+        return {
+          attempted: true,
+          required: true,
+          ok: true,
+          strategy: requirement.strategy,
+          timeoutMs,
+          beforeLoadedCount: beforeLoadedThreadIds.length,
+          afterLoadedCount: lastLoadedThreadIds.length,
+          matchedThreadId: newThreadId,
+        };
+      }
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  } while (Date.now() < deadline);
+
+  return {
+    attempted: true,
+    required: true,
+    ok: false,
+    strategy: requirement.strategy,
+    timeoutMs,
+    beforeLoadedCount: beforeLoadedThreadIds.length,
+    afterLoadedCount: lastLoadedThreadIds.length,
+    matchedThreadId: null,
+    reason: 'Timed out waiting for App Server to report the launched thread as loaded.',
+  };
+}
+
 export function launchCodexRemote(plan: LaunchPlan): LaunchExecutionResult {
   const env = { ...process.env, CODEX_APP_SERVER_URL: plan.appServerUrl };
   if (process.platform === 'win32') {
+    const commandLine = cmdWrappedCommandLine(plan.codexCommand, plan.args);
     const command = [
-      `Start-Process -FilePath ${psQuote(plan.codexCommand)}`,
+      `Start-Process -FilePath ${psQuote('cmd.exe')}`,
       `-WorkingDirectory ${psQuote(plan.workspace)}`,
       '-WindowStyle Normal',
-      `-ArgumentList ${psArrayLiteral(plan.args)}`,
+      `-ArgumentList ${psArrayLiteral(['/c', commandLine])}`,
     ].join(' ');
     const result = spawnSync(
       'powershell.exe',
@@ -407,7 +542,7 @@ export function launchCodexRemote(plan: LaunchPlan): LaunchExecutionResult {
     );
     return {
       ok: result.status === 0,
-      mode: 'windows-detached-terminal',
+      mode: 'windows-cmd-shim-terminal',
       exitCode: result.status,
       stdout: result.stdout.trim(),
       stderr: result.stderr.trim(),
@@ -439,7 +574,7 @@ export function buildSessionLaunchPayload(
 ): Record<string, unknown> {
   const store = deps.store ?? operationStore;
   const scheduler = deps.scheduler ?? spawnSessionLaunchOperation;
-  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
+  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexDetachedTerminalCommand;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
   const workspace = resolveWorkspaceRoot();
   const mode = resolveLaunchMode(input);
@@ -548,12 +683,15 @@ export async function runSessionLaunchOperation(
     store?: OperationStore;
     codexCommandResolver?: () => string;
     launchExecutor?: LaunchExecutor;
+    launchVerifier?: LaunchVerifier;
     env?: NodeJS.ProcessEnv;
   } = {},
 ): Promise<OperationRecord | null> {
   const store = deps.store ?? operationStore;
-  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
+  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexDetachedTerminalCommand;
   const launchExecutor = deps.launchExecutor ?? launchCodexRemote;
+  const useDefaultLaunchVerifier = deps.launchVerifier === undefined && deps.launchExecutor === undefined;
+  const launchVerifier = deps.launchVerifier ?? (useDefaultLaunchVerifier ? verifyLaunchLoadedThread : null);
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
   const workspace = resolveWorkspaceRoot(input.workspace);
   const prompt = promptFromEnv(deps.env);
@@ -589,12 +727,30 @@ export async function runSessionLaunchOperation(
   const evidence: Record<string, unknown> = { ...existingEvidence, requested, launch: launchPlanPreview(plan) };
 
   try {
+    const beforeLoadedThreadIds = useDefaultLaunchVerifier
+      ? await loadedThreadIds(appServerUrl, input.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+      : null;
     const launched = await launchExecutor(plan);
     evidence.launched = redactValue(launched, { workspace });
     if (launched.ok) {
+      if (launchVerifier) {
+        const launchVerification = await launchVerifier({
+          plan,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          beforeLoadedThreadIds,
+        });
+        evidence.launchVerification = launchVerification;
+        if (!launchVerification.ok && launchVerification.required) {
+          return store.fail(input.operationId, {
+            failure: { name: 'SessionLaunchVerificationFailed', message: launchVerification.reason ?? 'Remote TUI launch was not observed by App Server.' },
+            evidence,
+            nextAction: 'Inspect launch and App Server evidence before retrying.',
+          });
+        }
+      }
       return store.complete(input.operationId, {
         evidence,
-        nextAction: 'Remote TUI launch was scheduled. Use codex_thread_context or App Server status to inspect the resulting session.',
+        nextAction: 'Remote TUI launch was observed or scheduled. Use codex_thread_context or App Server status for follow-up diagnostics.',
       });
     }
     return store.fail(input.operationId, {

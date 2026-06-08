@@ -129,6 +129,38 @@ test('findRemoteTuiTargets can explicitly fall back to workspace and URL for fre
   assert.deepEqual(targets.roots.map((entry) => entry.pid), [10, 50, 70]);
 });
 
+test('findRemoteTuiTargets climbs to Windows cmd shim terminal wrapper', () => {
+  const workspace = resolve(process.cwd());
+  const processes: ProcessEntry[] = [
+    {
+      pid: 100,
+      parentPid: null,
+      name: 'cmd.exe',
+      commandLine: `"C:\\WINDOWS\\system32\\cmd.exe" /c ""C:\\Users\\Example\\AppData\\Roaming\\npm\\codex.cmd" resume ${threadId} --disable js_repl --remote ${appServerUrl} -C "${workspace}""`,
+    },
+    {
+      pid: 101,
+      parentPid: 100,
+      name: 'node.exe',
+      commandLine: `"node" "C:\\Users\\Example\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js" resume ${threadId} --disable js_repl --remote ${appServerUrl} -C "${workspace}"`,
+    },
+    {
+      pid: 102,
+      parentPid: 101,
+      name: 'codex.exe',
+      commandLine: `codex.exe resume ${threadId} --disable js_repl --remote ${appServerUrl} -C "${workspace}"`,
+    },
+  ];
+  const targets = findRemoteTuiTargets(processes, {
+    appServerUrl,
+    threadId,
+    workspace,
+  });
+
+  assert.deepEqual(targets.remoteProcesses.map((entry) => entry.pid), [101, 102]);
+  assert.deepEqual(targets.roots.map((entry) => entry.pid), [100]);
+});
+
 test('findRemoteTuiTargets does not climb to wrapper that also owns App Server', () => {
   const workspace = resolve(process.cwd());
   const targets = findRemoteTuiTargets(combinedRemoteAppServerWrapperFixture(workspace), {

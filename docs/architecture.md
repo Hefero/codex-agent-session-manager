@@ -313,6 +313,11 @@ Phase 7 starts App Server lifecycle management from MCP:
 - `codex_session_launch` remains scoped to visible TUI launch against a known
   App Server URL/state. Keeping these operations separate avoids hiding process
   ownership changes inside a TUI-launch command.
+- On Windows, visible detached TUI launch intentionally differs from hidden
+  App Server launch. The App Server path uses the hidden native launcher to
+  avoid popup windows; the detached TUI path uses `cmd.exe /c` with the npm
+  `codex.cmd` shim so Codex receives a real terminal. Deterministic launches
+  record App Server loaded-thread verification before completing.
 
 Phase 8 exposes the same surface as an operator CLI:
 

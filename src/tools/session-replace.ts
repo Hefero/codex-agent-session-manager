@@ -16,7 +16,7 @@ import {
   buildCodexArgs,
   launchCodexRemote,
   launchPlanPreview,
-  resolveCodexCommand,
+  resolveCodexDetachedTerminalCommand,
   type LaunchExecutionResult,
   type LaunchExecutor,
   type LaunchPlan,
@@ -329,7 +329,7 @@ export function buildSessionReplacePayload(
   const store = deps.store ?? operationStore;
   const scheduler = deps.scheduler ?? spawnSessionReplaceOperation;
   const processLister = deps.processLister ?? listProcesses;
-  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
+  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexDetachedTerminalCommand;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
   const workspace = resolveWorkspaceRoot();
   const prompt = input.prompt ?? null;
@@ -443,7 +443,7 @@ export async function runSessionReplaceOperation(
   const store = deps.store ?? operationStore;
   const processLister = deps.processLister ?? listProcesses;
   const processStopper = deps.processStopper ?? stopProcessTree;
-  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexCommand;
+  const codexCommandResolver = deps.codexCommandResolver ?? resolveCodexDetachedTerminalCommand;
   const launchExecutor = deps.launchExecutor ?? launchCodexRemote;
   const appServerUrl = resolveAppServerUrl(input.appServerUrl);
   const workspace = resolveWorkspaceRoot(input.workspace);

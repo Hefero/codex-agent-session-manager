@@ -156,11 +156,13 @@ Current checks:
   set the required API key only in the remote-launch environment, install with
   `--env-var`, refresh MCP, call one read-only tool, then deinit/uninstall and
   revoke or rotate the test key.
-- Tavily replay evidence for alpha.3 used fresh `codex exec` as callable
-  proof after Windows `session launch` recorded `launched.ok:true` but did not
-  leave a loaded App Server thread. Future session-launch validation should
-  assert that a new thread is actually loaded, not only that `Start-Process`
-  returned success.
+- Windows `session launch` proof must assert App Server loaded-thread state,
+  not only process-spawn success. For `mode=session`, verify the requested
+  `threadId` appears in `thread/loaded/list`; for `mode=fresh` with a prompt,
+  verify a new loaded thread appears relative to the pre-launch baseline.
+  Alpha.3 replay evidence used a disposable loopback App Server, recorded
+  `windows-cmd-shim-terminal`, and completed with
+  `launchVerification.ok:true`.
 - keep public CLI operation output JSON by default and preserve
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.

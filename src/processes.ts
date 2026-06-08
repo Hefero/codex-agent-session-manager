@@ -118,6 +118,7 @@ export function commandLineTokens(commandLine: string): string[] {
 
 function basenameToken(token: unknown): string {
   return String(token ?? '')
+    .replace(/^["']+|["']+$/gu, '')
     .replace(/\\/gu, '/')
     .split('/')
     .filter(Boolean)
@@ -186,6 +187,7 @@ function referencesThreadId(tokens: readonly string[], threadId: string): boolea
 }
 
 export function isRemoteTuiProcess(entry: ProcessEntry, options: RemoteTuiMatchOptions): boolean {
+  if (isShellProcess(entry)) return false;
   const tokens = commandLineTokens(entry.commandLine);
   if (!isCodexLikeProcess(entry, tokens)) return false;
   if (hasToken(tokens, 'app-server')) return false;
@@ -219,6 +221,21 @@ function isDedicatedRemoteTerminalProcess(entry: ProcessEntry, workspace: string
   return commandLine.includes(normalizedForSearch(workspace)) && commandLine.includes('/.codex-agent-session-manager/state/remote-');
 }
 
+function isRemoteShellTerminalProcess(entry: ProcessEntry, options: RemoteTuiMatchOptions): boolean {
+  if (!isShellProcess(entry)) return false;
+  const tokens = commandLineTokens(entry.commandLine);
+  if (!isCodexLikeProcess(entry, tokens)) return false;
+  if (hasToken(tokens, 'app-server')) return false;
+
+  const remote = optionValue(tokens, ['--remote']);
+  if (normalizeAppServerUrl(remote) !== normalizeAppServerUrl(options.appServerUrl)) return false;
+
+  const cwd = optionValue(tokens, ['-C', '--cd']);
+  if (!pathsMatch(cwd, options.workspace)) return false;
+
+  return options.allowWorkspaceUrlFallback === true || referencesThreadId(tokens, options.threadId);
+}
+
 function processByPid(processes: readonly ProcessEntry[]): Map<number, ProcessEntry> {
   return new Map(processes.map((entry) => [entry.pid, entry]));
 }
@@ -250,6 +267,8 @@ export function findRemoteTuiTargets(processes: readonly ProcessEntry[], options
       && (
         (isRemoteWrapperProcess(parent) && !descendantsContainAppServer(processes, parent.pid))
         || isDedicatedRemoteTerminalProcess(parent, options.workspace)
+        || isRemoteShellTerminalProcess(parent, options)
+        || isRemoteTuiProcess(parent, options)
       )
     ) {
       root = parent;

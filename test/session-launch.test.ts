@@ -194,6 +194,58 @@ test('runSessionLaunchOperation records launch result without prompt text', asyn
   }
 });
 
+test('runSessionLaunchOperation fails when loaded-thread verification fails', async () => {
+  const fixture = tempStore();
+  const { store } = fixture;
+  try {
+    store.create({
+      id: 'op-launch',
+      kind: 'session_launch',
+      status: 'running',
+      evidence: { background: { scheduled: true } },
+    });
+
+    const operation = await runSessionLaunchOperation(
+      {
+        operationId: 'op-launch',
+        appServerUrl,
+        workspace: resolve(process.cwd()),
+        mode: 'session',
+        threadId: 'thread-a',
+      },
+      {
+        store,
+        codexCommandResolver: () => 'codex-test',
+        launchExecutor() {
+          return { ok: true, mode: 'fake', pid: 456 };
+        },
+        async launchVerifier() {
+          return {
+            attempted: true,
+            required: true,
+            ok: false,
+            strategy: 'session-thread-loaded',
+            timeoutMs: 1_000,
+            beforeLoadedCount: 0,
+            afterLoadedCount: 0,
+            matchedThreadId: null,
+            reason: 'Timed out waiting for App Server to report the launched thread as loaded.',
+          };
+        },
+      },
+    );
+
+    assert.equal(operation?.status, 'failed');
+    assert.deepEqual(operation?.failure, {
+      name: 'SessionLaunchVerificationFailed',
+      message: 'Timed out waiting for App Server to report the launched thread as loaded.',
+    });
+    assert.doesNotMatch(JSON.stringify(operation), /secret launch prompt/u);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('session launch operation argv round trips without prompt text', () => {
   const workspace = resolve(process.cwd());
   const args = buildSessionLaunchOperationArgs({

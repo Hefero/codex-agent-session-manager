@@ -12,6 +12,17 @@ const TOML_MARKER_START = '# BEGIN codex-agent-session-manager';
 const TOML_MARKER_END = '# END codex-agent-session-manager';
 const AGENTS_MARKER_START = '<!-- codex-agent-session-manager:start -->';
 const AGENTS_MARKER_END = '<!-- codex-agent-session-manager:end -->';
+const GITIGNORE_ENTRIES = [
+  `${PRIMARY_STATE_DIR_NAME}/`,
+  '.env',
+  '.env.*',
+  '!.env.example',
+  '!.env.sample',
+  '.secrets/',
+  '*credentials*.json',
+  '*token*.json',
+  '*oauth*.json',
+];
 
 type InitActionKind = 'create' | 'update' | 'noop' | 'skip';
 
@@ -175,11 +186,14 @@ function upsertMcpConfig(content: string | null): string {
 }
 
 function gitignoreContent(content: string | null): string {
-  const entry = `${PRIMARY_STATE_DIR_NAME}/`;
-  if (content === null || content.trim().length === 0) return `${entry}\n`;
+  if (content === null || content.trim().length === 0) return `${GITIGNORE_ENTRIES.join('\n')}\n`;
   const lines = content.split(/\r?\n/u).map((line) => line.trim());
-  if (lines.includes(entry) || lines.includes(PRIMARY_STATE_DIR_NAME)) return ensureTrailingNewline(content);
-  return ensureTrailingNewline(`${content.trimEnd()}\n${entry}`);
+  const missing = GITIGNORE_ENTRIES.filter((entry) => {
+    if (entry === `${PRIMARY_STATE_DIR_NAME}/` && lines.includes(PRIMARY_STATE_DIR_NAME)) return false;
+    return !lines.includes(entry);
+  });
+  if (missing.length === 0) return ensureTrailingNewline(content);
+  return ensureTrailingNewline(`${content.trimEnd()}\n${missing.join('\n')}`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -242,13 +256,27 @@ Useful commands:
 - \`${packageName} mcp add npm <package-spec> --dry-run\`
 - \`${packageName} mcp add npm <package-spec> --confirm\`
 - \`${packageName} mcp add npm <package-spec> --env-var <NAME> --confirm\`
-  for secret-bearing MCPs; this forwards env var names without storing secret
-  values in project config.
+  for env/auth MCPs; this forwards env var names without storing values in
+  project config.
 - \`${packageName} mcp refresh --thread-id <thread-id>\`
 
+For OAuth, PII, write-capable, or destructive MCPs:
+
+- Prefer read-only scopes first. Escalate to read/write or delete scopes only
+  after explicit operator approval.
+- Do not patch files under \`node_modules\`. If an MCP package needs different
+  behavior, create a project-local wrapper or a dedicated package.
+- Keep OAuth client files, tokens, and API keys outside the workspace or under
+  ignored paths such as \`.secrets/\`. Do not print sensitive values.
+- If env vars were created or changed after App Server started, restart or
+  relaunch the managed App Server before refresh, or use a reviewed local
+  wrapper that reads the intended user-scoped config.
+
 Treat App Server MCP status as diagnostic. Validate MCP changes with a real
-tool call from the continuation or replacement turn. Direct MCP SDK calls are
-diagnostic only; they do not prove the model-callable catalog refreshed.
+tool call from the continuation or replacement turn. If a changed MCP is not
+callable yet, keep using \`${packageName} mcp refresh --thread-id <thread-id>\`
+or session replacement until a fresh turn proves the call. Direct MCP SDK calls
+are diagnostic only; they do not prove the model-callable catalog refreshed.
 ${AGENTS_MARKER_END}`;
 }
 
@@ -306,7 +334,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     gitignorePath,
     gitignoreCurrent,
     gitignoreContent(gitignoreCurrent),
-    'ignore local session-manager runtime state',
+    'ignore local runtime state and common secret files',
   );
 
   const packageJsonPath = workspacePath(workspace, 'package.json');

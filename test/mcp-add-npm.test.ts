@@ -156,6 +156,11 @@ test('mcp add npm can forward env var names and omit default stdio arg', () => {
     assert.deepEqual(payload.args, ['node_modules/tavily-mcp/build/index.js']);
     assert.deepEqual(payload.envVars, ['TAVILY_API_KEY']);
     assert.doesNotMatch(JSON.stringify(payload), /secret/u);
+    assert.match(JSON.stringify(payload.warnings), /env_vars stores variable names only/u);
+    assert.match(JSON.stringify(payload.warnings), /App Server launch environment/u);
+    assert.match(JSON.stringify(payload.warnings), /OAuth, PII, write-capable, or destructive MCPs/u);
+    assert.match(String(payload.nextAction), /restart or relaunch the managed App Server/u);
+    assert.match(String(payload.nextAction), /do not stop at MCP status alone/u);
 
     const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
     assert.match(config, /\[mcp_servers\.tavily_search\]/u);

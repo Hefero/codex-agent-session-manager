@@ -36,9 +36,9 @@ npm run codex:remote
 ```
 
 `init` is project-scoped. It updates `.codex/config.toml` with the
-`codex_agent_session_manager` MCP server, adds `.codex-agent-session-manager/`
-to `.gitignore`, adds `codex:init`, `codex:init:dry-run`, remote, and App
-Server package scripts when `package.json` exists, and creates or updates a
+`codex_agent_session_manager` MCP server, adds local runtime and common secret
+patterns to `.gitignore`, adds `codex:init`, `codex:init:dry-run`, remote, and
+App Server package scripts when `package.json` exists, and creates or updates a
 small `AGENTS.md` block unless `--no-agents` is passed. It does not edit the
 user's global Codex config.
 
@@ -161,6 +161,15 @@ Use repeated `--env-var <NAME>` for secret-bearing MCPs; this writes
 without storing the secret value in TOML. Use `--no-default-stdio-arg` for npm
 MCP packages whose entrypoint defaults to stdio and should not receive a
 positional `"stdio"` argument.
+
+For OAuth, PII, write-capable, or destructive MCPs, treat the package install
+as only the first step. Prefer read-only scopes first, escalate to write/delete
+scopes only after explicit operator approval, keep OAuth clients and token
+files outside the workspace or under ignored paths such as `.secrets/`, and do
+not patch installed files under `node_modules`. If an environment variable was
+created or changed after the managed App Server started, restart or relaunch
+that App Server before `mcp refresh`; `.codex/config.toml` stores only variable
+names, not values.
 
 ## Development
 

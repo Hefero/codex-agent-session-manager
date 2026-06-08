@@ -79,6 +79,13 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
 
     const gitignore = readFileSync(join(workspace, '.gitignore'), 'utf8');
     assert.match(gitignore, /\.codex-agent-session-manager\//u);
+    assert.match(gitignore, /^\.env$/mu);
+    assert.match(gitignore, /^\.env\.\*$/mu);
+    assert.match(gitignore, /^!\.env\.example$/mu);
+    assert.match(gitignore, /^\.secrets\/$/mu);
+    assert.match(gitignore, /^\*credentials\*\.json$/mu);
+    assert.match(gitignore, /^\*token\*\.json$/mu);
+    assert.match(gitignore, /^\*oauth\*\.json$/mu);
 
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
@@ -96,7 +103,11 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.match(agents, /codex-agent-session-manager:start/u);
     assert.match(agents, /MCP callable-catalog validation/u);
     assert.match(agents, /mcp add npm <package-spec>/u);
-    assert.match(agents, /Direct MCP SDK calls are\s+diagnostic only/u);
+    assert.match(agents, /Prefer read-only scopes first/u);
+    assert.match(agents, /Do not patch files under `node_modules`/u);
+    assert.match(agents, /If env vars were created or changed after App Server started/u);
+    assert.match(agents, /keep using `codex-agent-session-manager mcp refresh --thread-id <thread-id>`/u);
+    assert.match(agents, /Direct MCP SDK calls\s+are diagnostic only/u);
 
     const second = buildInitPlan({ workspace });
     assert.equal(second.fileUpdates.length, 0);

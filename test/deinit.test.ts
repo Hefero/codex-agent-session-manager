@@ -99,7 +99,11 @@ test('deinit confirm removes scaffold and optional runtime while leaving npm pac
     applyDeinitPlan(plan);
 
     assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), false);
-    assert.equal(existsSync(join(workspace, '.gitignore')), false);
+    assert.equal(existsSync(join(workspace, '.gitignore')), true);
+    const gitignore = readFileSync(join(workspace, '.gitignore'), 'utf8');
+    assert.doesNotMatch(gitignore, /\.codex-agent-session-manager\//u);
+    assert.match(gitignore, /^\.secrets\/$/mu);
+    assert.match(gitignore, /^\*token\*\.json$/mu);
     assert.equal(existsSync(join(workspace, 'AGENTS.md')), false);
     assert.equal(existsSync(join(workspace, '.codex-agent-session-manager')), false);
     assert.deepEqual(plan.packagesToUninstall, [packageName]);

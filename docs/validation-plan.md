@@ -58,6 +58,13 @@ The smoke must prove:
   writing files and shows `--ignore-scripts` by default.
 - CLI/MCP `mcp add npm` supports secret-bearing MCPs through `env_vars` /
   `--env-var` without storing secret values in `.codex/config.toml`.
+- CLI/MCP `mcp add npm` reports that `env_vars` stores names only, and that
+  values created after App Server launch require App Server restart/relaunch
+  or a reviewed wrapper before refresh.
+- Generated `AGENTS.md` instructs agents to prefer read-only OAuth scopes
+  first, require explicit operator approval for write/delete scopes, avoid
+  patching `node_modules`, and continue through refresh/replacement until a
+  real callable MCP tool call proves the change.
 - CLI/MCP `mcp add npm` can omit the default positional `"stdio"` argument for
   packages that default to stdio.
 - Real CLI/MCP `mcp add npm` execution requires `--confirm` or
@@ -156,6 +163,11 @@ Current checks:
   set the required API key only in the remote-launch environment, install with
   `--env-var`, refresh MCP, call one read-only tool, then deinit/uninstall and
   revoke or rotate the test key.
+- validate a high-risk OAuth MCP flow such as Google Drive with a safe account:
+  start from read-only when possible, only move to read/write after explicit
+  operator instruction, keep token/client files outside the workspace or under
+  ignored paths, avoid editing `node_modules`, refresh/relaunch as needed, and
+  prove the final tool through the model-callable catalog.
 - Windows `session launch` proof must assert App Server loaded-thread state,
   not only process-spawn success. For `mode=session`, verify the requested
   `threadId` appears in `thread/loaded/list`; for `mode=fresh` with a prompt,

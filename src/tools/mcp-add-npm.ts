@@ -257,6 +257,28 @@ function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
+function warningsFor(input: { envVars: string[]; lifecycleScriptsSuppressed?: boolean }): string[] {
+  const warnings: string[] = [];
+  if (input.envVars.length > 0) {
+    warnings.push('env_vars stores variable names only. The named values must exist in the App Server launch environment before MCP refresh; if they were created or changed after App Server start, restart or relaunch the managed App Server first.');
+    warnings.push('For OAuth, PII, write-capable, or destructive MCPs, confirm the requested scopes with the operator, keep keys and tokens outside the workspace or under ignored paths, and do not print sensitive values.');
+  }
+  if (input.lifecycleScriptsSuppressed === true) {
+    warnings.push('The installed package declares npm lifecycle scripts, but this install used --ignore-scripts. If the MCP server fails because generated or native assets are missing, rerun with allowScripts:true only after reviewing the package.');
+  }
+  return warnings;
+}
+
+function nextActionFor(input: { serverName: string; envVars: string[]; dryRun: boolean }): string {
+  const installStep = input.dryRun
+    ? 'Run with dryRun:false and confirm:true.'
+    : '';
+  const envStep = input.envVars.length > 0
+    ? ' Ensure the named env vars are visible to the App Server process; restart or relaunch the managed App Server first if they were just created or changed.'
+    : '';
+  return `${installStep}${envStep} Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${input.serverName}; do not stop at MCP status alone.`.trim();
+}
+
 function mcpServerBlock(input: { serverName: string; packageName: string; entrypoint: string; extraArgs: string[]; envVars: string[] }): string {
   const nodeModulesPath = `node_modules/${input.packageName}/${input.entrypoint}`.replace(/\\/gu, '/');
   const args = [nodeModulesPath, ...input.extraArgs];
@@ -366,7 +388,8 @@ export function buildMcpAddNpmPayload(
       envVars,
       lifecycleScriptsAllowed: allowScripts,
       actions,
-      nextAction: 'Run with dryRun:false and confirm:true, then call codex_mcp_refresh with an explicit threadId and let the current turn finish so the continuation can call the new MCP tool.',
+      warnings: warningsFor({ envVars }),
+      nextAction: nextActionFor({ serverName, envVars, dryRun: true }),
     };
   }
 
@@ -450,11 +473,7 @@ export function buildMcpAddNpmPayload(
       stdoutIncluded: npmResult.stdout.length > 0,
       stderrIncluded: npmResult.stderr.length > 0,
     },
-    warnings: lifecycleScriptsSuppressed
-      ? [
-        'The installed package declares npm lifecycle scripts, but this install used --ignore-scripts. If the MCP server fails because generated or native assets are missing, rerun with allowScripts:true only after reviewing the package.',
-      ]
-      : [],
-    nextAction: `Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${serverName}.`,
+    warnings: warningsFor({ envVars, lifecycleScriptsSuppressed }),
+    nextAction: nextActionFor({ serverName, envVars, dryRun: false }),
   };
 }

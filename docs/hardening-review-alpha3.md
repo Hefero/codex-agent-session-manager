@@ -310,6 +310,33 @@ evidence alone. Cleanup matching now climbs through the Windows
 `cmd.exe -> node.exe -> codex.exe` shim tree so `session close` can stop the
 right wrapper root.
 
+### H-015: OAuth/write-capable MCP flow needed stronger agent guardrails
+
+Status: fixed in working tree for alpha.3.
+
+A Google Drive MCP replay with user-scoped OAuth credentials validated the
+functional path: the agent started from the official read-only package, the
+operator explicitly requested read/write behavior, credential values were not
+stored in project TOML, and App Server status showed the read/write wrapper
+server after refresh. The replay still exposed agent guidance gaps:
+
+- the agent briefly tried to modify installed package files under
+  `node_modules` before moving to a project-local wrapper;
+- `env_vars` in Codex config forwards names only, so values created after App
+  Server launch require App Server restart/relaunch or a reviewed wrapper that
+  reads the intended user-scoped config;
+- the final callable proof path needed to be more directive when a changed MCP
+  was visible in App Server status but not callable in the current turn.
+
+The fix updates generated `.gitignore` entries to include common secret files,
+updates generated `AGENTS.md` guidance for OAuth, PII, write-capable, and
+destructive MCPs, and makes `mcp add npm` emit warnings/next actions when
+`envVars` are configured. The intended default flow is now explicit:
+read-only first, write/delete scopes only after operator approval, no
+`node_modules` patching, no printed sensitive values, and no final success
+claim until a continuation or replacement turn performs a real callable MCP
+tool invocation.
+
 ## Validation
 
 Current working-tree validation for this hardening pass:

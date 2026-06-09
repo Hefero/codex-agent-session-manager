@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 as win32Path } from 'node:path';
 
 export interface NpmRunResult {
   status: number | null;
@@ -29,7 +29,7 @@ export function resolveNpmCommand(args: readonly string[], deps: ResolveNpmComma
 
   if (platform === 'win32') {
     const execPath = deps.execPath ?? process.execPath;
-    const npmCliPath = deps.npmCliPath ?? join(dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    const npmCliPath = deps.npmCliPath ?? win32Path.join(win32Path.dirname(execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
     const pathExists = deps.pathExists ?? existsSync;
     if (pathExists(npmCliPath)) {
       return {

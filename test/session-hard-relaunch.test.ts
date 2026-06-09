@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -31,6 +31,16 @@ function tempStore(): { workspace: string; store: OperationStore; cleanup(): voi
       rmSync(workspace, { recursive: true, force: true });
     },
   };
+}
+
+function normalizeScheduledInputs(inputs: unknown[], workspace: string): Array<Record<string, unknown>> {
+  return inputs.map((input) => {
+    assert.equal(typeof input, 'object');
+    assert.notEqual(input, null);
+    const record = input as Record<string, unknown>;
+    assert.equal(realpathSync.native(String(record.workspace)), realpathSync.native(workspace));
+    return { ...record, workspace: '<workspace>' };
+  });
 }
 
 function withCwd<T>(cwd: string, fn: () => T): T {
@@ -182,10 +192,10 @@ test('buildSessionHardRelaunchPayload schedules operation with prompt through en
     assert.equal(payload.dryRun, false);
     assert.equal(typeof payload.operationId, 'string');
     assert.deepEqual(scheduledPrompts, [prompt]);
-    assert.deepEqual(scheduledInputs, [
+    assert.deepEqual(normalizeScheduledInputs(scheduledInputs, workspace), [
       {
         operationId: payload.operationId,
-        workspace: resolve(workspace),
+        workspace: '<workspace>',
         targetRootPid: 10,
         delayMs: 5_000,
         handoffMode: 'detached',
@@ -245,10 +255,10 @@ test('buildSessionHardRelaunchPayload can schedule shell resume-next handoff', (
     assert.match(JSON.stringify(payload), /shell-resume-next/u);
     assert.match(JSON.stringify(payload), /requiresShellHook/u);
     assert.doesNotMatch(JSON.stringify(payload), /resume in same shell/u);
-    assert.deepEqual(scheduledInputs, [
+    assert.deepEqual(normalizeScheduledInputs(scheduledInputs, workspace), [
       {
         operationId: payload.operationId,
-        workspace: resolve(workspace),
+        workspace: '<workspace>',
         targetRootPid: 10,
         delayMs: 2_000,
         handoffMode: 'shell-resume-next',

@@ -63,6 +63,76 @@ globally or linked on PATH, `codex-agent-session-manager init` is equivalent.
 If the project already has the generated npm scripts, `npm run codex:init` is
 also equivalent. The init operation is idempotent and project-scoped.
 
+### Optional Shell Hook
+
+`init --install-shell-hook` is intentionally not part of default init. Default
+init stays inside the project directory. The shell hook is the explicit opt-in
+path for users who want plain `codex` to enter the managed remote flow inside
+initialized projects.
+
+Without the shell hook:
+
+- `codex` works normally.
+- The project MCP server is available after init.
+- Managed App Server launch/state helpers work best when the session was
+  started with `npm run codex:remote`, `codex-agent-session-manager remote`, or
+  an explicit App Server URL.
+
+With the shell hook:
+
+- outside initialized projects, `codex` delegates to the real Codex CLI;
+- inside initialized projects, `codex` delegates to the generated project
+  supervisor under `.codex-agent-session-manager/shell/`;
+- the supervisor starts or reuses the workspace App Server and launches the
+  visible Codex TUI through `codex-agent-session-manager remote`;
+- simple Codex-shaped commands are preserved:
+  - `codex "<prompt>"` becomes managed remote with `--prompt`;
+  - `codex resume <thread-id> "<prompt>"` becomes managed remote with
+    `--resume <thread-id> --prompt`;
+  - `codex resume --last "<prompt>"` becomes managed remote with
+    `--resume-last --prompt`.
+
+Supported shells are PowerShell, bash, and zsh. Auto-detection uses PowerShell
+on Windows, the current `$SHELL` when it is bash or zsh, zsh on macOS when the
+shell is unknown, and bash elsewhere. Default profile targets are:
+
+- PowerShell: `~/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1`
+- zsh: `~/.zshrc`
+- bash on macOS: `~/.bash_profile`
+- bash elsewhere: `~/.bashrc`
+
+Preview first:
+
+```powershell
+codex-agent-session-manager init --install-shell-hook --dry-run
+codex-agent-session-manager shell-hook install --dry-run
+```
+
+Install explicitly:
+
+```powershell
+codex-agent-session-manager init --install-shell-hook --shell-hook-shell powershell
+codex-agent-session-manager init --install-shell-hook --shell-hook-shell bash
+codex-agent-session-manager init --install-shell-hook --shell-hook-shell zsh
+```
+
+Or install the hook directly:
+
+```powershell
+codex-agent-session-manager shell-hook install --shell powershell --confirm
+codex-agent-session-manager shell-hook install --shell bash --confirm
+codex-agent-session-manager shell-hook install --shell zsh --confirm
+```
+
+Use `--shell-hook-profile <path>` with `init`, or `--profile <path>` with
+`shell-hook`, to target a disposable profile during testing. Restart the shell
+or source the edited profile before testing the `codex` function. Remove the
+profile hook with:
+
+```powershell
+codex-agent-session-manager shell-hook uninstall --confirm
+```
+
 Remove from a project:
 
 ```powershell
@@ -159,7 +229,8 @@ not expose raw arbitrary App Server JSON-RPC.
 ```powershell
 codex-agent-session-manager init --dry-run
 codex-agent-session-manager init
-codex-agent-session-manager init --install-shell-hook
+codex-agent-session-manager init --install-shell-hook --dry-run
+codex-agent-session-manager init --install-shell-hook --shell-hook-shell powershell
 codex-agent-session-manager deinit --dry-run
 codex-agent-session-manager deinit --confirm --remove-runtime
 codex-agent-session-manager shell-hook install --dry-run
@@ -184,19 +255,9 @@ codex-agent-session-manager session close --thread-id <thread-id> --dry-run
 codex-agent-session-manager session replace --thread-id <thread-id> --dry-run
 ```
 
-The shell hook is opt-in and supports PowerShell, bash, and zsh. Install it with
-`codex-agent-session-manager shell-hook install --confirm`, or during init with
-`codex-agent-session-manager init --install-shell-hook`. Auto-detection uses
-PowerShell on Windows, zsh on macOS when the shell is unknown, and bash on
-Linux when the shell is unknown; pass `--shell powershell|bash|zsh` or
-`--shell-hook-shell powershell|bash|zsh` to choose explicitly. Outside
-initialized workspaces it delegates to the real Codex CLI. Inside initialized
-workspaces it makes `codex` enter the managed `remote` path, so a user or
-external session launcher can type `codex` while the package starts/reuses the
-workspace App Server, records launcher state, and launches the visible TUI with
-`--remote`. Basic Codex-style forms are translated: `codex "<prompt>"` becomes
-a managed fresh remote with `--prompt`, and
-`codex resume <thread-id> "<prompt>"` becomes a managed resume remote.
+See [Optional Shell Hook](#optional-shell-hook) before installing the shell
+hook. It is opt-in because it edits a shell profile and changes how the
+`codex` command resolves inside initialized workspaces.
 
 CLI output is JSON by default. Operations that modify files, run package
 installs, are destructive, or launch real processes default to dry-run and

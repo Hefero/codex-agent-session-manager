@@ -476,11 +476,12 @@ export async function runMcpRefreshOperation(
       clientUserMessageId,
       turnId: started.turn?.id ?? started.id ?? null,
       inputIncluded: true,
+      operationCompletionMeaning: 'turn-started-not-turn-finished',
     };
 
     return store.complete(input.operationId, {
       evidence,
-      nextAction: 'Continuation turn started. Final proof still requires that fresh turn to call the changed MCP tool; App Server status or direct SDK calls are diagnostic only.',
+      nextAction: 'Continuation turn started. The operation does not wait for that child turn to finish. Final proof still requires the fresh turn to call the changed MCP tool, then stop validation and report the result; App Server status or direct SDK calls are diagnostic only.',
     });
   } catch (error) {
     return store.fail(input.operationId, {

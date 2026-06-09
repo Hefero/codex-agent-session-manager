@@ -4,12 +4,14 @@ import { deinitUsage, runDeinitCommand } from './deinit.js';
 import { initUsage, runInitCommand } from './init.js';
 import { publicCliUsage, runPublicCommand } from './public-cli.js';
 import { remoteUsage, runRemoteCommand } from './remote.js';
+import { shellHookUsage, runShellHookCommand } from './shell-hook.js';
 import { runAppServerStopOperationFromArgv } from './tools/app-server-lifecycle.js';
 import { runAppServerStartOperationFromArgv } from './tools/app-server-start.js';
 import { runMcpRefreshOperationFromArgv } from './tools/mcp-refresh.js';
 import { runMcpReloadOperationFromArgv } from './tools/reload.js';
 import { runSessionCloseOperationFromArgv } from './tools/session-close.js';
 import { runSessionContinueOperationFromArgv } from './tools/session-continue.js';
+import { runSessionHardRelaunchOperationFromArgv } from './tools/session-hard-relaunch.js';
 import { runSessionLaunchOperationFromArgv } from './tools/session-launch.js';
 import { runSessionReplaceOperationFromArgv } from './tools/session-replace.js';
 import { packageName, packageVersion } from './version.js';
@@ -22,9 +24,12 @@ Usage:
   codex-agent-session-manager init [options]
   codex-agent-session-manager deinit [options]
   codex-agent-session-manager remote [options]
+  codex-agent-session-manager stop [options]
   codex-agent-session-manager app-server <start|status|stop> [options]
   codex-agent-session-manager mcp <add|refresh> [options]
+  codex-agent-session-manager operation <read|wait> [options]
   codex-agent-session-manager session <launch|close|replace> [options]
+  codex-agent-session-manager shell-hook <install|uninstall|status> [options]
   codex-agent-session-manager --version
   codex-agent-session-manager --help
 
@@ -33,13 +38,17 @@ Commands:
   init        Initialize a project-scoped Codex session manager setup.
   deinit      Remove the project-scoped session manager scaffold.
   remote      Start/reuse a workspace App Server and launch Codex remote.
+  stop        Alias for app-server stop.
   app-server  Manage the workspace-owned App Server lifecycle.
   mcp         Add npm MCP servers, reload MCPs, and start continuation turns.
+  operation   Read or wait for durable session-manager operations.
   session     Launch, close, or replace Codex remote TUI sessions.
+  shell-hook  Install an opt-in PowerShell codex function hook.
 
 ${publicCliUsage()}
 ${initUsage()}
 ${deinitUsage()}
+${shellHookUsage()}
 `);
 }
 
@@ -76,12 +85,17 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
+  if (command === 'shell-hook') {
+    process.exitCode = await runShellHookCommand(argv.slice(1));
+    return;
+  }
+
   if (command === 'remote-help') {
     process.stdout.write(remoteUsage());
     return;
   }
 
-  if (command === 'app-server' || command === 'mcp' || command === 'session') {
+  if (command === 'stop' || command === 'app-server' || command === 'mcp' || command === 'operation' || command === 'session') {
     process.exitCode = await runPublicCommand(argv);
     return;
   }
@@ -118,6 +132,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'run-session-launch-operation') {
     await runSessionLaunchOperationFromArgv(argv.slice(1));
+    return;
+  }
+
+  if (command === 'run-session-hard-relaunch-operation') {
+    await runSessionHardRelaunchOperationFromArgv(argv.slice(1));
     return;
   }
 

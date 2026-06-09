@@ -4,6 +4,7 @@ import { buildAppServerStatusPayload, buildAppServerStopPayload } from './tools/
 import { buildAppServerStartPayload } from './tools/app-server-start.js';
 import { buildMcpAddNpmPayload } from './tools/mcp-add-npm.js';
 import { buildMcpRefreshPayload } from './tools/mcp-refresh.js';
+import { buildOperationReadPayload, buildOperationWaitPayload, OperationStore } from './tools/operations.js';
 import { buildSessionClosePayload } from './tools/session-close.js';
 import { buildSessionLaunchPayload } from './tools/session-launch.js';
 import { buildSessionReplacePayload } from './tools/session-replace.js';
@@ -49,8 +50,11 @@ function usage(): string {
   codex-agent-session-manager app-server start [options]
   codex-agent-session-manager app-server status [options]
   codex-agent-session-manager app-server stop [options]
+  codex-agent-session-manager stop [options]
   codex-agent-session-manager mcp add npm <package-spec> [options]
   codex-agent-session-manager mcp refresh --thread-id <thread-id> [options]
+  codex-agent-session-manager operation read --operation-id <operation-id>
+  codex-agent-session-manager operation wait --operation-id <operation-id> [options]
   codex-agent-session-manager session launch [options]
   codex-agent-session-manager session close --thread-id <thread-id> [options]
   codex-agent-session-manager session replace --thread-id <thread-id> [options]
@@ -68,6 +72,7 @@ App Server:
   start:  --host <host> --port <port|auto> --enable-image-generation
   status: --no-probe-ready --no-process-tree --ready-timeout-ms <ms>
   stop:   --delay-ms <ms>
+          top-level "stop" is an alias for "app-server stop"
 
 MCP:
   add npm: --server-name <name> --entrypoint <package-relative-js>
@@ -75,6 +80,10 @@ MCP:
            --dry-run --confirm --allow-scripts
   refresh: --highlight-tool <name> --continuation-timeout-ms <ms>
            --continuation-poll-ms <ms> --continuation-stable-ms <ms>
+
+Operation:
+  read:    --operation-id <operation-id>
+  wait:    --operation-id <operation-id> --timeout-ms <ms> --poll-ms <ms>
 
 Session:
   launch:  --mode <fresh|session|last|pick> --resume-last --pick
@@ -332,6 +341,29 @@ function sessionCommand(subcommand: string, flags: Map<string, string[]>, rest: 
   throw new Error(`Unknown session subcommand: ${subcommand}`);
 }
 
+function operationCommand(subcommand: string, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
+  if (subcommand === 'read') {
+    assertNoExtraPositionals(rest, 'operation read');
+    assertAllowedFlags(flags, ['operation-id'], 'operation read');
+    return {
+      command: 'operation',
+      subcommand,
+      input: { operationId: requireString(flags, 'operation-id') },
+    };
+  }
+
+  if (subcommand === 'wait') {
+    assertNoExtraPositionals(rest, 'operation wait');
+    assertAllowedFlags(flags, ['operation-id', 'timeout-ms', 'poll-ms'], 'operation wait');
+    const input: Record<string, unknown> = { operationId: requireString(flags, 'operation-id') };
+    addOptional(input, 'timeoutMs', numberFlag(flags, 'timeout-ms'));
+    addOptional(input, 'pollMs', numberFlag(flags, 'poll-ms'));
+    return { command: 'operation', subcommand, input };
+  }
+
+  throw new Error(`Unknown operation subcommand: ${subcommand}`);
+}
+
 export function parsePublicCommand(argv: readonly string[]): ParsedPublicCommand | { help: true; text: string } {
   const parsed = parseArgs(argv);
   const [command, subcommand, ...rest] = parsed.positionals;
@@ -343,10 +375,12 @@ export function parsePublicCommand(argv: readonly string[]): ParsedPublicCommand
   ) {
     return { help: true, text: usage() };
   }
+  if (command === 'stop') return appServerCommand('stop', parsed.flags, [subcommand, ...rest].filter((value): value is string => value !== undefined));
   if (subcommand === undefined) throw new Error(`${command} requires a subcommand.`);
 
   if (command === 'app-server') return appServerCommand(subcommand, parsed.flags, rest);
   if (command === 'mcp') return mcpCommand(subcommand, parsed.flags, rest);
+  if (command === 'operation') return operationCommand(subcommand, parsed.flags, rest);
   if (command === 'session') return sessionCommand(subcommand, parsed.flags, rest);
   throw new Error(`Unknown public command: ${command}`);
 }
@@ -366,6 +400,18 @@ async function payloadFor(command: ParsedPublicCommand): Promise<Record<string, 
   }
   if (command.command === 'mcp' && command.subcommand === 'add-npm') {
     return buildMcpAddNpmPayload(command.input as Parameters<typeof buildMcpAddNpmPayload>[0]);
+  }
+  if (command.command === 'operation' && command.subcommand === 'read') {
+    return buildOperationReadPayload(
+      command.input as Parameters<typeof buildOperationReadPayload>[0],
+      new OperationStore({ workspace: process.cwd() }),
+    );
+  }
+  if (command.command === 'operation' && command.subcommand === 'wait') {
+    return buildOperationWaitPayload(
+      command.input as Parameters<typeof buildOperationWaitPayload>[0],
+      new OperationStore({ workspace: process.cwd() }),
+    );
   }
   if (command.command === 'session' && command.subcommand === 'launch') {
     return buildSessionLaunchPayload(command.input as Parameters<typeof buildSessionLaunchPayload>[0]);

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveNpmCommand } from '../src/npm.js';
+
 interface PackFile {
   path?: string;
 }
@@ -22,7 +24,8 @@ function npmInvocation(): { command: string; prefix: string[] } {
   if (npmExecPath && existsSync(npmExecPath)) {
     return { command: process.execPath, prefix: [npmExecPath] };
   }
-  return { command: process.platform === 'win32' ? 'npm.cmd' : 'npm', prefix: [] };
+  const npm = resolveNpmCommand([]);
+  return { command: npm.command, prefix: npm.args };
 }
 
 function runNpm(args: readonly string[], cwd: string): { stdout: string; stderr: string } {

@@ -28,6 +28,7 @@ import { buildMcpRefreshPayload, mcpRefreshInputSchema } from './tools/mcp-refre
 import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
 import { buildSessionClosePayload, sessionCloseInputSchema } from './tools/session-close.js';
 import { buildSessionContinuePayload, sessionContinueInputSchema } from './tools/session-continue.js';
+import { buildSessionHardRelaunchPayload, sessionHardRelaunchInputSchema } from './tools/session-hard-relaunch.js';
 import { buildSessionLaunchPayload, sessionLaunchInputSchema } from './tools/session-launch.js';
 import { buildSessionReplacePayload, sessionReplaceInputSchema } from './tools/session-replace.js';
 import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
@@ -191,7 +192,8 @@ export function createMcpServer(): McpServer {
     'codex_operation_wait',
     {
       title: 'Wait For Operation',
-      description: 'Wait for a session-manager operation to complete or fail.',
+      description:
+        'Wait for a session-manager operation to complete or fail. Do not use this from the same active thread after scheduling a continuation for that thread; finish the turn first so the continuation can observe an idle boundary.',
       inputSchema: operationWaitInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -345,7 +347,8 @@ export function createMcpServer(): McpServer {
     'codex_session_continue',
     {
       title: 'Continue Codex Session',
-      description: 'Schedule a continuation turn after the target thread reaches an idle boundary. Prompt text is never returned in operation evidence.',
+      description:
+        'Schedule a continuation turn after the target thread reaches an idle boundary. If targeting the current thread, return after scheduling and let the current turn finish; waiting inside the same turn keeps the target active. Prompt text is never returned in operation evidence.',
       inputSchema: sessionContinueInputSchema,
       annotations: {
         readOnlyHint: false,
@@ -400,6 +403,29 @@ export function createMcpServer(): McpServer {
     },
     async (input) => {
       const payload = buildSessionLaunchPayload(input);
+      return {
+        content: [{ type: 'text', text: jsonText(payload) }],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    'codex_session_hard_relaunch',
+    {
+      title: 'Hard Relaunch Current Codex TUI',
+      description:
+        'Experimental escape hatch: find the current Codex TUI process by this MCP server process ancestry, then resume the current thread by default before stopping the old TUI root. Detached mode starts plain Codex in a new terminal. shell-resume-next mode requires the opt-in PowerShell hook and relaunches through codex-agent-session-manager remote in the same terminal. Does not use App Server turn/start directly.',
+      inputSchema: sessionHardRelaunchInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      const payload = buildSessionHardRelaunchPayload(input);
       return {
         content: [{ type: 'text', text: jsonText(payload) }],
         structuredContent: payload,

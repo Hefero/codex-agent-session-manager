@@ -89,6 +89,7 @@ try {
     'codex_app_server_stop',
     'codex_session_continue',
     'codex_session_close',
+    'codex_session_hard_relaunch',
     'codex_session_launch',
     'codex_session_replace',
   ];
@@ -174,6 +175,7 @@ try {
     cliHelp.status !== 0
     || !cliHelp.stdout.includes('codex-agent-session-manager init [options]')
     || !cliHelp.stdout.includes('codex-agent-session-manager deinit [options]')
+    || !cliHelp.stdout.includes('codex-agent-session-manager stop [options]')
     || !cliHelp.stdout.includes('codex-agent-session-manager app-server <start|status|stop>')
   ) {
     throw new Error(`Unexpected CLI help result: stdout=${cliHelp.stdout} stderr=${cliHelp.stderr}`);

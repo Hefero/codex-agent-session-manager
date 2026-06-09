@@ -37,10 +37,11 @@ codex
 
 `init` is project-scoped. It updates `.codex/config.toml` with the
 `codex_agent_session_manager` MCP server, adds local runtime and common secret
-patterns to `.gitignore`, adds `codex:init`, `codex:init:dry-run`, remote, and
-App Server package scripts when `package.json` exists, and creates or updates a
-small `AGENTS.md` block unless `--no-agents` is passed. It does not edit the
-user's global Codex config.
+patterns to `.gitignore`, creates or updates `package.json` with
+`codex:init`, `codex:init:dry-run`, remote, and App Server package scripts, and
+creates or updates a small `AGENTS.md` block unless `--no-agents` is passed. It
+does not edit the user's global Codex config. It also does not edit shell
+profiles unless `--install-shell-hook` is explicitly passed.
 
 After `init`, a normal Codex session started from the project directory can use
 the session-manager MCP tools; `npm run codex:remote` is optional. Use the
@@ -49,9 +50,11 @@ App Server, launch a remote TUI, or use the session close/replace helpers.
 On Windows, the generated project config routes the session-manager stdio MCP
 server through `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe`
 so plain `codex` sessions do not need a visible helper console for this MCP.
-When a `package.json` exists, the MCP config points at the project-local
-`node_modules/codex-agent-session-manager/dist/cli.js` entrypoint; otherwise it
-falls back to resolving `codex-agent-session-manager` from `PATH`.
+The MCP config points at the project-local
+`node_modules/codex-agent-session-manager/dist/cli.js` entrypoint. If the local
+package is missing, `init` runs `npm install --save-dev --ignore-scripts
+--no-audit --no-fund --cache ./.npm-cache codex-agent-session-manager@<version>`
+so even an empty workspace becomes self-contained.
 
 After upgrading this package in an existing project, rerun
 `npx codex-agent-session-manager init` to refresh the managed `AGENTS.md`,
@@ -64,7 +67,7 @@ Remove from a project:
 
 ```powershell
 codex-agent-session-manager app-server stop --dry-run
-codex-agent-session-manager app-server stop --confirm
+codex-agent-session-manager stop --confirm
 codex-agent-session-manager deinit --confirm --remove-runtime
 npm uninstall -D codex-agent-session-manager
 ```
@@ -72,13 +75,14 @@ npm uninstall -D codex-agent-session-manager
 `deinit` defaults to dry-run unless `--confirm` is passed. It removes only the
 project-scoped scaffold it can recognize: the managed `.codex/config.toml`
 block, generated npm scripts, managed `AGENTS.md` block, and local runtime
-ignore rule. Runtime state under `.codex-agent-session-manager/` is removed
-only with `--remove-runtime`. MCP server blocks created through `mcp add npm`
-are kept unless `--remove-added-mcps` is passed; when removed, `deinit` reports
-the npm packages selected for uninstall or scratch-project removal. It does not
-stop a running Codex App Server, remote TUI, or already-loaded MCP server
-processes; stop or reload active sessions before uninstalling packages when
-live processes must exit.
+and npm-cache ignore rules. Runtime state under
+`.codex-agent-session-manager/` is removed only with `--remove-runtime`. MCP
+server blocks created through `mcp add npm` are kept unless
+`--remove-added-mcps` is passed; when removed, `deinit` reports the npm
+packages selected for uninstall or scratch-project removal. It does not stop a
+running Codex App Server, remote TUI, or already-loaded MCP server processes;
+stop or reload active sessions before uninstalling packages when live
+processes must exit.
 Scratch test workspaces can also use `deinit --confirm
 --remove-added-mcps --remove-empty-npm-project --remove-empty-codex-dir` to
 remove an npm skeleton that contains only this package and npm MCP packages
@@ -104,6 +108,7 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_operation_wait`
   - `codex_session_close`
   - `codex_session_continue`
+  - `codex_session_hard_relaunch`
   - `codex_session_launch`
   - `codex_session_manager_probe`
   - `codex_session_replace`
@@ -117,10 +122,33 @@ MCP status from App Server is treated as diagnostic only. Callable-catalog proof
 requires a real model-callable tool invocation from the correct continuation or
 replacement boundary.
 
+`codex_thread_context` recommends a target thread from loaded threads first,
+then stored-thread and recent operation-state hints. Operation-derived thread
+ids are low-confidence recovery evidence, useful when `thread/list` is empty
+after a remote TUI exits.
+
 For the common "MCP changed, refresh and continue" path, use
 `codex_mcp_refresh`: it reloads MCP servers, records before/after status
 evidence, waits for the target thread to become idle, and starts the
-continuation turn. The continuation must still perform the actual proof call.
+continuation turn. A completed refresh/continue operation means `turn/start`
+was accepted; it does not mean the child turn finished. The continuation must
+still perform the actual proof call, then stop validation and report the
+result.
+
+When `codex_session_continue` targets the current thread, schedule it and end
+the current turn. Calling `codex_operation_wait` or `codex_operation_read` from
+that same active turn keeps the target thread busy, so the background child
+cannot observe the idle boundary it needs before `turn/start`.
+
+`codex_session_hard_relaunch` is an experimental escape hatch. Detached mode is
+for plain `codex` sessions: it identifies the current Codex TUI from process
+ancestry, resumes the current thread by default with an optional non-secret
+prompt, then attempts to stop the old TUI process tree. With the opt-in
+PowerShell shell hook installed, `handoffMode: "shell-resume-next"` writes
+managed-remote resume state so the shell hook relaunches through
+`codex-agent-session-manager remote` in the same terminal. It does not use App
+Server `turn/start` directly, and its prompt eventually reaches Codex through a
+CLI argument surface, so it must never contain secrets.
 
 ## Public CLI
 
@@ -131,22 +159,41 @@ not expose raw arbitrary App Server JSON-RPC.
 ```powershell
 codex-agent-session-manager init --dry-run
 codex-agent-session-manager init
+codex-agent-session-manager init --install-shell-hook
 codex-agent-session-manager deinit --dry-run
 codex-agent-session-manager deinit --confirm --remove-runtime
+codex-agent-session-manager shell-hook install --dry-run
+codex-agent-session-manager shell-hook install --confirm
+codex-agent-session-manager shell-hook uninstall --dry-run
 
 codex-agent-session-manager app-server start --dry-run --port auto
 codex-agent-session-manager app-server status --no-probe-ready
 codex-agent-session-manager app-server stop --dry-run
+codex-agent-session-manager stop --confirm
 
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --dry-run
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything --confirm
 codex-agent-session-manager mcp add npm tavily-mcp@latest --server-name tavily_search --env-var TAVILY_API_KEY --no-default-stdio-arg --confirm
 codex-agent-session-manager mcp refresh --thread-id <thread-id>
 
+codex-agent-session-manager operation read --operation-id <operation-id>
+codex-agent-session-manager operation wait --operation-id <operation-id> --timeout-ms 30000
+
 codex-agent-session-manager session launch --thread-id <thread-id> --dry-run
 codex-agent-session-manager session close --thread-id <thread-id> --dry-run
 codex-agent-session-manager session replace --thread-id <thread-id> --dry-run
 ```
+
+The PowerShell shell hook is opt-in. Install it with
+`codex-agent-session-manager shell-hook install --confirm`, or during init with
+`codex-agent-session-manager init --install-shell-hook`. Outside initialized
+workspaces it delegates to the real Codex CLI. Inside initialized workspaces it
+makes `codex` enter the managed `remote` path, so a user or external session
+launcher can type `codex` while the package starts/reuses the workspace App
+Server, records launcher state, and launches the visible TUI with `--remote`.
+Basic Codex-style forms are translated: `codex "<prompt>"` becomes a managed
+fresh remote with `--prompt`, and `codex resume <thread-id> "<prompt>"` becomes
+a managed resume remote.
 
 CLI output is JSON by default. Operations that modify files, run package
 installs, are destructive, or launch real processes default to dry-run and
@@ -169,11 +216,12 @@ machine-readable form.
 `mcp add npm` defaults to dry-run. With `--confirm`, it installs an npm MCP
 package locally and writes only the project-scoped `.codex/config.toml`. It
 does not edit the user's global Codex config. The install uses
-`--ignore-scripts` by default; pass `--allow-scripts` only when the selected
-package requires npm lifecycle scripts during install. After a real install,
-the result reports lifecycle scripts declared by the package and warns when
-they were suppressed. The install does not count as callable proof; run
-`mcp refresh` and validate with a real tool call from the continuation.
+`--ignore-scripts --no-audit --no-fund --cache ./.npm-cache` by default; pass
+`--allow-scripts` only when the selected package requires npm lifecycle scripts
+during install. After a real install, the result reports lifecycle scripts
+declared by the package and warns when they were suppressed. The install does
+not count as callable proof; run `mcp refresh` and validate with a real tool
+call from the continuation.
 Use repeated `--env-var <NAME>` for secret-bearing MCPs; this writes
 `env_vars = ["NAME"]` and forwards the variable from the launch environment
 without storing the secret value in TOML. Use `--no-default-stdio-arg` for npm
@@ -255,7 +303,9 @@ launching to `codex_session_launch`, keeping App Server lifecycle and visible
 session launch as separate operations. Agents can inspect the managed process
 with `codex_app_server_status` and stop only the workspace-owned App Server
 tree with `codex_app_server_stop`; neither operation rewrites user global MCP
-configuration.
+configuration. If managed state says an App Server is ready but the process is
+gone, `codex_app_server_status` reconciles the stale state to stopped and marks
+stuck managed stop operations completed with reconciliation evidence.
 
 `codex_session_close` targets Codex remote TUI processes. It does not own
 operator-created terminal wrappers such as a manual `powershell -NoExit`

@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   selectThreadContextRecommendation,
   summarizeLoadedThreadRead,
+  summarizeOperationThreadCandidates,
   summarizeStoredThread,
+  type OperationThreadCandidate,
   type StoredThreadCandidate,
   type ThreadContextCandidate,
 } from '../src/tools/thread-context.js';
@@ -38,6 +40,18 @@ function stored(input: Partial<StoredThreadCandidate> & { threadId: string }): S
     updatedAt: null,
     sourceKind: null,
     ephemeral: null,
+    ...input,
+  };
+}
+
+function operationCandidate(input: Partial<OperationThreadCandidate> & { threadId: string }): OperationThreadCandidate {
+  return {
+    operationId: 'op-a',
+    operationKind: 'session_continue',
+    operationStatus: 'completed',
+    updatedAt: '2026-06-09T00:00:00.000Z',
+    source: 'operation-requested-thread',
+    turnId: null,
     ...input,
   };
 }
@@ -129,6 +143,95 @@ test('stored candidate is a low-confidence recovery hint after loaded heuristics
     recommendationConfidence: 'low',
     ambiguous: false,
   });
+});
+
+test('operation candidate is a low-confidence recovery hint after loaded and stored heuristics fail', () => {
+  const result = selectThreadContextRecommendation([], [], [operationCandidate({ threadId: 'operation-thread' })]);
+
+  assert.deepEqual(result, {
+    recommendedThreadId: 'operation-thread',
+    recommendedThreadIdSource: 'operation-state-thread',
+    recommendationConfidence: 'low',
+    ambiguous: false,
+  });
+});
+
+test('notLoaded sole loaded candidate does not outrank operation recovery hint', () => {
+  const result = selectThreadContextRecommendation(
+    [candidate({ threadId: 'wrong-thread', status: 'notLoaded', cwdMatches: false })],
+    [],
+    [operationCandidate({ threadId: 'operation-thread' })],
+  );
+
+  assert.deepEqual(result, {
+    recommendedThreadId: 'operation-thread',
+    recommendedThreadIdSource: 'operation-state-thread',
+    recommendationConfidence: 'low',
+    ambiguous: false,
+  });
+});
+
+test('active non-cwd loaded candidate does not outrank operation recovery hint', () => {
+  const result = selectThreadContextRecommendation(
+    [candidate({ threadId: 'active-other-cwd', status: 'active', cwdMatches: false })],
+    [],
+    [operationCandidate({ threadId: 'operation-thread' })],
+  );
+
+  assert.deepEqual(result, {
+    recommendedThreadId: 'operation-thread',
+    recommendedThreadIdSource: 'operation-state-thread',
+    recommendationConfidence: 'low',
+    ambiguous: false,
+  });
+});
+
+test('summarizeOperationThreadCandidates extracts newest thread ids without operation evidence payloads', () => {
+  const candidates = summarizeOperationThreadCandidates([
+    {
+      id: 'op-old',
+      kind: 'session_continue',
+      status: 'completed',
+      createdAt: '2026-06-09T00:00:00.000Z',
+      updatedAt: '2026-06-09T00:00:01.000Z',
+      evidence: {
+        requested: {
+          threadId: 'thread-a',
+          promptProvided: true,
+          promptCharCount: 10,
+        },
+      },
+    },
+    {
+      id: 'op-new',
+      kind: 'mcp_refresh',
+      status: 'completed',
+      createdAt: '2026-06-09T00:00:02.000Z',
+      updatedAt: '2026-06-09T00:00:03.000Z',
+      evidence: {
+        requested: {
+          threadId: 'thread-a',
+        },
+        turnStart: {
+          threadId: 'thread-a',
+          turnId: 'turn-a',
+        },
+      },
+    },
+  ]);
+
+  assert.deepEqual(candidates, [
+    {
+      threadId: 'thread-a',
+      operationId: 'op-new',
+      operationKind: 'mcp_refresh',
+      operationStatus: 'completed',
+      updatedAt: '2026-06-09T00:00:03.000Z',
+      source: 'operation-turn-start-thread',
+      turnId: 'turn-a',
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(candidates), /promptCharCount/u);
 });
 
 test('multiple marker matches are ambiguous', () => {

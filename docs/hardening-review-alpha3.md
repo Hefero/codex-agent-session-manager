@@ -118,6 +118,10 @@ The fix changes the default install command to:
 npm install --save-dev --ignore-scripts <package>
 ```
 
+Later replay hardening also added `--no-audit --no-fund --cache
+./.npm-cache` to keep agent-triggered installs quieter and scoped to the
+workspace cache.
+
 Packages that genuinely require lifecycle scripts can still be installed with
 explicit opt-in:
 
@@ -369,7 +373,7 @@ directory. On Windows it also prepared
 `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe` without using
 that launcher for the session-manager MCP server itself.
 
-The fix makes `init` prefer the project-local package entrypoint when a
+The initial fix made `init` prefer the project-local package entrypoint when a
 `package.json` exists:
 
 - non-Windows: `node node_modules/codex-agent-session-manager/dist/cli.js serve`;
@@ -386,6 +390,303 @@ also probed, but a generated marketplace alone did not make the bundled MCP
 callable; plugin install remains a future distribution option rather than this
 release's minimum path.
 
+### H-018: empty-workspace init was not self-contained enough
+
+Status: fixed after alpha.5; release target next alpha.
+
+The `test1`/`test2` replay showed that `init` in an empty workspace could
+successfully expose the session-manager MCP to plain `codex`, but the no-package
+fallback was still weaker than the desired project-scoped contract. It depended
+on resolving the package from the user's PATH, and agents that fell back to raw
+npm commands on Windows could hit PowerShell `npm.ps1` execution-policy errors
+or user-global npm-cache permission failures.
+
+The fix removes the no-package fallback from new init plans:
+
+- `init` creates a minimal private `package.json` when absent;
+- the generated MCP config always points at
+  `node_modules/codex-agent-session-manager/dist/cli.js`;
+- if that local entrypoint is missing, `init` runs `npm install --save-dev
+  --ignore-scripts --no-audit --no-fund --cache ./.npm-cache
+  codex-agent-session-manager@<version>`;
+- `.gitignore` includes `.npm-cache/`;
+- `deinit` removes the managed runtime/cache ignore rules, while preserving
+  broadly useful secret-file ignore entries.
+
+This makes initialized scratch projects self-contained and keeps the install
+side effects inside the workspace.
+
+### H-019: refresh/continue completion wording encouraged overclaiming
+
+Status: fixed after alpha.5; release target next alpha.
+
+The same replay showed an important semantic gap: a durable
+`codex_mcp_refresh` or `codex_session_continue` operation completes when the
+App Server accepts `turn/start`, not when the resulting child turn finishes or
+proves a target MCP call. Agents could read a completed operation as success
+and keep probing from the wrong layer.
+
+The fix adds explicit evidence and next-action wording:
+
+- operation evidence records `operationCompletionMeaning:
+  turn-started-not-turn-finished`;
+- next actions say final proof requires the fresh turn to call the changed MCP
+  tool;
+- generated `AGENTS.md` now says to stop validation once the target callable
+  tool succeeds and not to use direct SDK calls as proof.
+
+### H-020: stale App Server ready state could survive dead processes
+
+Status: fixed after alpha.5; release target next alpha.
+
+A cleanup race in a disposable replay left `app-server.json` reporting a ready
+managed App Server even though the recorded process and `/readyz` endpoint were
+gone. A managed `app_server_stop` operation was also still marked running. This
+made later status output misleading until manual cleanup.
+
+`codex_app_server_status` now reconciles workspace-owned ready state when the
+recorded process is dead:
+
+- the state file is rewritten to stopped/owned:false;
+- matching running managed `app_server_stop` operations are marked completed
+  with reconciliation evidence;
+- the status payload reports the reconciliation so the operator can see that
+  stale state was repaired.
+
+### H-021: App Server status reconciliation overreacted when process-tree output was disabled
+
+Status: fixed after alpha.5; release target next alpha.
+
+The hard-reset probe exposed a regression in the first H-020 implementation.
+After closing only the remote TUI tree, `app-server status --no-process-tree`
+reported `/readyz` as alive but still reconciled the managed state to stopped.
+
+Root cause: `managedAppServerTarget` used the collected process tree both for
+public output and for the `processAlive` decision. With
+`includeProcessTree:false`, the tree was intentionally empty, so
+`processAlive` became false even when the App Server root process existed.
+Reconciliation also happened before considering `/readyz`, so a transient or
+limited process-list miss could mark a reachable App Server as stopped.
+
+The fix separates process existence from process-tree output and suppresses
+dead-process reconciliation when the ready probe succeeds:
+
+- `processAlive` now checks the full process list for the recorded pid;
+- `includeProcessTree:false` only hides tree details from output;
+- when `/readyz` is probed and returns true, status does not rewrite state to
+  stopped solely because process matching missed.
+
+### H-022: Windows init could fail with `spawnSync npm.cmd EINVAL`
+
+Status: fixed after alpha.5; release target next alpha.
+
+A real `init` run in a disposable Windows workspace failed while
+installing the package into the initialized project:
+
+```text
+npm install failed while initializing codex-agent-session-manager: spawnSync npm.cmd EINVAL
+```
+
+The failure reproduced with a minimal Node probe:
+
+```text
+spawnSync('npm.cmd', ['--version'], { shell: false }) -> EINVAL
+```
+
+On this Windows machine, `cmd.exe /c npm.cmd --version` worked, and the more
+direct route `node.exe <node-prefix>/node_modules/npm/bin/npm-cli.js --version`
+also worked with `shell:false`.
+
+The fix adds a shared npm runner:
+
+- Windows first tries `process.execPath` plus the adjacent
+  `node_modules/npm/bin/npm-cli.js`;
+- if that npm CLI file is unavailable, it falls back to `cmd.exe /d /c
+  npm.cmd`;
+- non-Windows still uses `npm` directly;
+- previews still show `npm ...` rather than leaking host-specific Node install
+  paths;
+- both `init` and `mcp add npm` use the shared runner;
+- `pack-smoke` uses the same fallback when it is run outside `npm run`.
+
+Validation added unit coverage for all three command-resolution branches. Local
+probes showed:
+
+- the new Windows strategy is `node-npm-cli` and successfully returned npm
+  `11.9.0` from the same `test3` cwd;
+- a globally linked working tree now proceeds past EINVAL and fails only at the
+  expected registry boundary because `0.1.0-alpha.5` is not yet published;
+- a full no-publish init replay succeeds when the target project first installs
+  a local packed tarball;
+- `npm link codex-agent-session-manager` inside the target project is not a
+  valid full init replay because it creates a `node_modules` symlink escaping
+  the workspace, which the workspace hardening correctly rejects.
+
+### H-023: self-continuation wait can keep the target thread active
+
+Status: fixed after alpha.5; release target next alpha.
+
+The `test3` managed-alias replay exposed a subtle same-thread timing trap. The
+agent called `codex_session_continue` targeting its own thread, then immediately
+called `codex_operation_read`/`codex_operation_wait` from the same active turn.
+The background child was correctly waiting for that target thread to become
+idle before `turn/start`, but the foreground turn stayed active while waiting
+for the child. The durable operation timed out after observing the target
+thread as `active` for the full continuation timeout.
+
+Root cause: `codex_session_continue` worked mechanically, but its `nextAction`
+encouraged `codex_operation_wait` without distinguishing same-thread
+continuation from cross-thread observation.
+
+The fix changes the agent-facing contract:
+
+- `codex_session_continue` now tells the agent to let the current turn finish
+  when the target is the current thread;
+- operation wait/read is recommended only from a later turn or another thread;
+- generated `AGENTS.md` documents the same rule;
+- docs and unit tests cover the new wording.
+
+### H-024: post-run diagnostics depended on manual operation JSON inspection
+
+Status: fixed after alpha.5; release target next alpha.
+
+The `test5` replay completed successfully, but external inspection exposed two
+debuggability gaps:
+
+- the MCP tools exposed `codex_operation_read` and `codex_operation_wait`, but
+  the public CLI did not expose matching `operation read/wait` commands;
+- after the visible remote TUI exited, `thread/list` returned no loaded threads
+  even though direct `thread/read` still worked by id and recent operation
+  evidence contained that id.
+
+The fix promotes operation state to a better operator-facing recovery surface:
+
+- public CLI now supports `operation read --operation-id <id>`;
+- public CLI now supports `operation wait --operation-id <id>`;
+- CLI operation commands bind the operation store to the current workspace at
+  command execution time;
+- `codex_thread_context` includes recent operation-derived thread candidates as
+  low-confidence recovery hints when loaded/stored thread evidence is empty or
+  inconclusive;
+- the old "sole loaded thread" heuristic no longer outranks operation evidence
+  when the sole listed thread is `notLoaded` or belongs to another cwd.
+
+### EXP-001: hard process reset outside App Server turn/start is viable as fallback
+
+Status: probed, not promoted to default architecture.
+
+A disposable Windows workspace validated the hard process path:
+
+- start a managed App Server;
+- launch a fresh remote TUI with a marker prompt;
+- discover the generated thread id from launch verification;
+- close the TUI root process while leaving App Server alive;
+- relaunch the same thread with `session launch --mode session --thread-id
+  <id> --prompt <marker>`.
+
+`thread/read` confirmed the same thread contained both the original launch
+marker and the relaunch prompt marker. This proves that process-level close plus
+`codex resume <threadId> --remote <url> ... <prompt>` can inject a new prompt
+without using App Server `turn/start`.
+
+Important constraint: fresh TUI process argv did not include the runtime
+thread id, so the first hard close required the existing
+workspace+App-Server-URL fallback. After relaunching with `resume <threadId>`,
+the thread id was present in argv and explicit-thread close worked without
+fallback.
+
+This should remain an explicitly labeled fallback or a separate process-manager
+mode. It is stronger than continuation when a full TUI reset is needed, but it
+has a broader process-management blast radius and should keep dry-run,
+explicit thread id, workspace+URL evidence, and prompt redaction.
+
+### EXP-002: plain codex self-management through a hard relaunch tool works
+
+Status: probed, experimental fallback implemented after alpha.5.
+
+A second disposable Windows workspace validated the stronger proposal: initialize
+a clean project, launch plain `codex` from that project without using
+`codex-agent-session-manager remote`, and let the first agent relaunch itself
+through a model-callable MCP tool.
+
+Probe shape:
+
+- install a local package tarball into a disposable Windows workspace;
+- run `npx codex-agent-session-manager init`;
+- launch plain `codex -C <workspace>` with a Stage1 prompt;
+- Stage1 calls `codex_session_hard_relaunch` with `dryRun:false`,
+  `confirm:true`, `delayMs:2000`, and a Stage2 prompt;
+- the tool identifies the current TUI root from MCP server process ancestry,
+  schedules a detached child, launches plain Codex, and stops the old root
+  process tree;
+- Stage2 creates `hard-relaunch-proof.txt`.
+
+Observed proof:
+
+- Stage1 transcript contains a real model-callable
+  `mcp__codex_agent_session_manager.codex_session_hard_relaunch` call.
+- The durable operation completed with `startsAppServer:false` and
+  `usesAppServerTurnStart:false`.
+- The relaunched Stage2 session had its own plain Codex session transcript.
+  That probe predated default thread resume; current behavior now refuses when
+  `resumeMode: "current"` cannot infer a thread id, unless the caller supplies
+  `threadId` or explicitly selects `resumeMode: "fresh"`.
+- `hard-relaunch-proof.txt` contained exactly `hard-relaunch-ok` with 16 bytes.
+
+Constraints:
+
+- The relaunch prompt is passed from the MCP tool to the detached child through
+  environment, but the relaunched Codex TUI receives it through the Codex CLI
+  argument surface. It is non-secret operator text only.
+- The proof watcher must allow enough time for the Stage1 agent to decide and
+  call the hard relaunch tool. A four-minute file watcher expired before Stage1
+  made the call, even though the full flow succeeded shortly after.
+- This does not replace the normal App Server refresh path. It is useful when
+  the goal is a hard self-relaunch from plain `codex`, not when a safer
+  `turn/start` continuation boundary is available.
+
+### EXP-003: opt-in PowerShell shell hook for same-terminal relaunch
+
+Status: implemented as a probe, not promoted to default behavior.
+
+The hard relaunch probe proved plain-`codex` self-management, but it necessarily
+opened a new terminal because a child process cannot directly enqueue commands
+into its parent shell. The next probe adds an explicit shell integration:
+
+- `init` writes `.codex-agent-session-manager/shell/codex.ps1` inside the
+  target workspace.
+- `codex-agent-session-manager shell-hook install --confirm` adds a marked
+  `function global:codex` block to the user's PowerShell profile.
+- `codex-agent-session-manager init --install-shell-hook` is an equivalent
+  explicit opt-in during project initialization; default `init` does not edit
+  shell profiles.
+- Outside initialized workspaces, the function resolves and calls the real
+  `codex.cmd`/`codex.exe`.
+- Inside initialized workspaces, the function delegates to the project-local
+  supervisor script. That script now calls `codex-agent-session-manager remote`
+  by default instead of plain Codex, so typing `codex` in an initialized
+  workspace starts/reuses the managed App Server and launches the visible TUI
+  with `--remote`.
+- The local supervisor translates basic Codex-shaped entry forms:
+  `codex "<prompt>"` becomes managed `remote --prompt <prompt>`, and
+  `codex resume <threadId> "<prompt>"` becomes managed
+  `remote --resume <threadId> --prompt <prompt>`.
+- `codex_session_hard_relaunch` accepts
+  `handoffMode: "shell-resume-next"`. In that mode the background child writes
+  `.codex-agent-session-manager/state/shell-resume-next.json` with
+  `mode: "managed-remote"`, marks the operation complete, and then attempts to
+  stop the old TUI root. The local supervisor consumes that state after the old
+  Codex process exits and starts the next managed remote launch in the same
+  terminal. The default resume behavior is
+  `resumeMode: "current"`: the tool uses explicit `threadId` when supplied, or
+  infers `resume <threadId>` / `--session-id <threadId>` from process ancestry.
+  If no thread id is available, it refuses instead of silently opening a new
+  thread; `resumeMode: "fresh"` is the explicit fallback.
+
+This is intentionally opt-in because it changes global shell command
+resolution. It is reversible with `codex-agent-session-manager shell-hook
+uninstall --confirm`.
+
 ## Validation
 
 Current working-tree validation for this hardening pass:
@@ -397,6 +698,9 @@ Current working-tree validation for this hardening pass:
 - `npm run security:scan`
 - `npm run audit:prod`
 - `npm run pack:validate`
+- `npm test -- test/init.test.ts test/session-hard-relaunch.test.ts`
+  including a Windows PowerShell supervisor replay where `shell-resume-next`
+  state is consumed as managed `remote --resume/--prompt` arguments.
 - public CLI parser rejects ignored cross-command flags and extra positionals
   before scheduling guarded operations.
 - Windows detached `session launch` was replayed against a disposable loopback
@@ -420,6 +724,6 @@ External alpha.3 env/auth probe:
   uninstalled `tavily-mcp` and `codex-agent-session-manager`, removed empty npm
   remnants, and left the scratch workspace empty.
 
-Full alpha.5 release validation should also run after the version bump:
+Full next-alpha release validation should also run after the version bump:
 
 - `npm publish --dry-run --tag alpha`

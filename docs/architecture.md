@@ -149,6 +149,10 @@ Phase 4 continuation adds the second mutating operation:
   text is not returned in structured output or operation evidence.
 - The child waits for the explicit target thread to reach an idle/stable
   boundary, then calls `turn/start`.
+- If the target is the current thread, the scheduling turn must end before any
+  wait/read follow-up. Waiting inside the same active turn keeps the target
+  thread active and can make the background child time out before it can call
+  `turn/start`.
 - Final proof still requires the started continuation turn to call the intended
   model-callable tool.
 - The first callable proof called `codex_session_continue` from a fresh proof
@@ -162,9 +166,10 @@ Phase 4 composition adds the default refresh workflow:
   the target thread idle/stable boundary, and starts a continuation turn.
 - Refresh prompt text uses environment transport, never argv or operation
   evidence.
-- The operation is proof scheduling, not final proof. Final proof still
-  requires the started continuation turn to call the changed model-callable
-  tool.
+- The operation is proof scheduling, not final proof. A completed operation
+  means App Server accepted `turn/start`, not that the child turn finished.
+  Final proof still requires the started continuation turn to call the changed
+  model-callable tool.
 
 Phase 10 package bootstrap adds an agent-facing npm MCP installer:
 
@@ -172,9 +177,9 @@ Phase 10 package bootstrap adds an agent-facing npm MCP installer:
   require `dryRun: false` and `confirm: true`.
 - With confirmation, it installs an npm MCP package into the current project
   and writes a marked project-scoped `.codex/config.toml` block.
-- npm install runs with `--ignore-scripts` by default. `allowScripts: true`
-  or CLI `--allow-scripts` is an explicit opt-in for packages that require
-  lifecycle scripts.
+- npm install runs with `--ignore-scripts --no-audit --no-fund --cache
+  ./.npm-cache` by default. `allowScripts: true` or CLI `--allow-scripts` is
+  an explicit opt-in for packages that require lifecycle scripts.
 - After a real install, the tool inspects the installed package metadata and
   reports declared lifecycle scripts plus whether they were suppressed by the
   default safe install mode.
@@ -192,7 +197,7 @@ Phase 10 also adds project teardown:
 - It removes recognized project-scoped scaffold only: the base
   `codex_agent_session_manager` `.codex/config.toml` block, generated npm
   scripts, managed `AGENTS.md` block, and `.codex-agent-session-manager/`
-  gitignore rule.
+  plus `.npm-cache/` gitignore rules.
 - Runtime state deletion is opt-in through `--remove-runtime`, guarded by a
   workspace containment check before recursive deletion.
 - Managed npm MCP blocks created by `mcp add npm` are kept by default and can
@@ -344,29 +349,71 @@ Phase 9 adds project bootstrap:
   `codex_agent_session_manager` so a normal `codex` session launched from the
   project can call the session-manager tools; the managed `remote` command is
   optional rather than required for tool availability.
-- When `package.json` exists, the generated MCP config points at the
-  project-local `node_modules/codex-agent-session-manager/dist/cli.js`
-  entrypoint. This avoids depending on a global npm binary when third-party
-  launchers simply run `codex` in the project directory.
+- Plain `codex` tool availability does not by itself provide a managed App
+  Server URL or launcher state. Operations that schedule continuations or close
+  managed sessions still need a managed `remote`/App Server path or an explicit
+  loopback App Server URL. The exception is the explicitly experimental
+  `codex_session_hard_relaunch` fallback, which manages the current visible
+  Codex TUI process tree directly instead of using App Server `turn/start`.
+- The generated MCP config points at the project-local
+  `node_modules/codex-agent-session-manager/dist/cli.js` entrypoint. This
+  avoids depending on a global npm binary when third-party launchers simply run
+  `codex` in the project directory.
 - On Windows, the generated MCP config wraps the session-manager stdio server
   with `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe`. For
   project-local installs the launcher runs `node node_modules/.../dist/cli.js
-  serve`; for workspaces without `package.json` it falls back to a hidden
-  `cmd.exe /d /s /c "codex-agent-session-manager serve"` path.
-- Runtime state is kept under `.codex-agent-session-manager/` and ignored by
-  the target project's `.gitignore`.
-- `package.json` is updated only when it already exists. Scripts use the
-  package binary directly so `npm run codex:init`, `npm run codex:remote`, and
-  related commands supply local `node_modules/.bin` on PATH for both App Server
-  and MCP startup.
+  serve`.
+- Runtime state is kept under `.codex-agent-session-manager/`, npm cache is
+  kept under `.npm-cache/`, and both are ignored by the target project's
+  `.gitignore`.
+- `package.json` is created when absent and updated when present. Scripts use
+  the package binary directly so `npm run codex:init`, `npm run codex:remote`,
+  and related commands supply local `node_modules/.bin` on PATH for both App
+  Server and MCP startup.
+- If the local package entrypoint is missing, `init` runs a project-local npm
+  install with `--ignore-scripts --no-audit --no-fund --cache ./.npm-cache`.
 - `AGENTS.md` gets a small managed block by default and can be skipped with
   `--no-agents`.
+- `init --install-shell-hook` is the explicit exception to the project-scoped
+  default: it installs or refreshes the marked PowerShell `codex` function hook
+  so plain `codex` launches can enter the managed remote path. Without that
+  flag, `init` does not edit shell profiles.
 - Repo-local Codex plugin packaging was probed as an alternative native path.
   A plugin with bundled `.mcp.json` became visible after explicit
   `codex plugin marketplace add` plus `codex plugin add`, but a repo
   marketplace file alone was not enough to make the MCP callable in a fresh
   `codex exec` session. The project-scoped `.codex/config.toml` path is
   therefore the minimum reliable native integration for this release.
+
+Post-alpha replay hardening adds an opt-in plain-`codex` self-management
+fallback:
+
+- With the PowerShell shell hook installed by `shell-hook install --confirm` or
+  `init --install-shell-hook`, `codex` remains the operator-facing command, but
+  initialized workspaces route it through
+  `codex-agent-session-manager remote`. This preserves compatibility with
+  external launchers that run `codex` in a project directory while still
+  creating managed App Server state and a `--remote` TUI.
+- The local supervisor supports the common Codex-shaped forms
+  `codex "<prompt>"` and `codex resume <threadId> "<prompt>"` by translating
+  them to managed `remote --prompt` / `remote --resume ... --prompt`.
+- `codex_session_hard_relaunch` walks from the session-manager MCP server
+  process to the visible Codex TUI ancestor, preferring the terminal wrapper
+  that launched Codex and avoiding App Server-looking ancestors.
+- With confirmation, detached mode schedules a child, passes the relaunch
+  prompt through environment, relaunches plain Codex, resumes the selected
+  thread by default, then attempts to stop the old TUI root process tree.
+  `handoffMode: "shell-resume-next"` instead writes managed-remote state for
+  the shell hook, which relaunches through `codex-agent-session-manager remote`
+  in the same terminal. If no thread id is inferable, the tool refuses unless
+  the caller explicitly selects `resumeMode: "fresh"`.
+- The relaunched Codex process receives the prompt through the Codex CLI
+  argument surface. This is acceptable only for non-secret operator text and is
+  why the tool remains a hard fallback rather than the default refresh path.
+- A disposable Windows probe initialized an empty workspace, launched plain
+  `codex` without `remote`, had the first agent call the hard relaunch tool,
+  and verified that the relaunched agent created `hard-relaunch-proof.txt` with
+  exact content `hard-relaunch-ok`.
 
 Phase 10 hardens packaging:
 

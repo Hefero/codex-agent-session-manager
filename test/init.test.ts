@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -11,13 +12,42 @@ function tempWorkspace(): string {
   return mkdtempSync(join(tmpdir(), 'codex-agent-session-manager-init-'));
 }
 
-test('parseInitArgs maps dry-run, workspace, json, and agents opt-out', () => {
-  assert.deepEqual(parseInitArgs(['--workspace', 'project-a', '--dry-run', '--json', '--no-agents']), {
+function fakeInstaller(workspace: string): { npmInstaller(input: { workspace: string; args: string[] }): { status: number; stdout: string; stderr: string } } {
+  return {
+    npmInstaller(input) {
+      assert.equal(resolve(input.workspace), resolve(workspace));
+      assert.deepEqual(input.args, [
+        'install',
+        '--save-dev',
+        '--ignore-scripts',
+        '--no-audit',
+        '--no-fund',
+        '--cache',
+        './.npm-cache',
+        `${packageName}@${packageVersion}`,
+      ]);
+      const distDir = join(workspace, 'node_modules', packageName, 'dist');
+      mkdirSync(distDir, { recursive: true });
+      writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  };
+}
+
+test('parseInitArgs maps dry-run, workspace, json, agents opt-out, and shell hook opt-in', () => {
+  assert.deepEqual(parseInitArgs(['--workspace', 'project-a', '--dry-run', '--json', '--no-agents', '--install-shell-hook', '--shell-hook-profile', 'profile.ps1']), {
     workspace: 'project-a',
     dryRun: true,
     json: true,
     agents: false,
+    installShellHook: true,
+    shellHookProfile: 'profile.ps1',
   });
+
+  assert.throws(
+    () => parseInitArgs(['--shell-hook-profile', 'profile.ps1']),
+    /--shell-hook-profile requires --install-shell-hook/u,
+  );
 });
 
 test('runInitCommand dry-run defaults to human output without writing files', async () => {
@@ -63,6 +93,26 @@ test('runInitCommand supports JSON output for automation', async () => {
   }
 });
 
+test('init shell hook opt-in is dry-run safe and redacts profile target', async () => {
+  const workspace = tempWorkspace();
+  const profile = join(workspace, 'profile.ps1');
+  const output: string[] = [];
+  try {
+    const exitCode = await runInitCommand(
+      ['--workspace', workspace, '--dry-run', '--install-shell-hook', '--shell-hook-profile', profile],
+      { output: (text) => output.push(text) },
+    );
+
+    assert.equal(exitCode, 0);
+    const text = output.join('\n');
+    assert.match(text, /<shell-profile> - install PowerShell codex function hook/u);
+    assert.doesNotMatch(text, new RegExp(escapeRegExp(profile), 'u'));
+    assert.equal(existsSync(profile), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('applyInitPlan creates project config, package scripts, gitignore, and AGENTS notes idempotently', () => {
   const workspace = tempWorkspace();
   try {
@@ -70,7 +120,8 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
 
     const first = buildInitPlan({ workspace });
     assert.ok(first.fileUpdates.length > 0);
-    applyInitPlan(first);
+    assert.ok(first.actions.some((action) => action.kind === 'run' && action.command?.includes(`${packageName}@${packageVersion}`)));
+    applyInitPlan(first, fakeInstaller(workspace));
 
     const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
     assert.match(config, /\[mcp_servers\.codex_agent_session_manager\]/u);
@@ -84,6 +135,7 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
 
     const gitignore = readFileSync(join(workspace, '.gitignore'), 'utf8');
     assert.match(gitignore, /\.codex-agent-session-manager\//u);
+    assert.match(gitignore, /^\.npm-cache\/$/mu);
     assert.match(gitignore, /^\.env$/mu);
     assert.match(gitignore, /^\.env\.\*$/mu);
     assert.match(gitignore, /^!\.env\.example$/mu);
@@ -91,6 +143,18 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.match(gitignore, /^\*credentials\*\.json$/mu);
     assert.match(gitignore, /^\*token\*\.json$/mu);
     assert.match(gitignore, /^\*oauth\*\.json$/mu);
+
+    const shellCodex = readFileSync(join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1'), 'utf8');
+    assert.match(shellCodex, /Resolve-CodexAgentSessionManagerCli/u);
+    assert.match(shellCodex, /supports managed shell prompts/u);
+    assert.match(shellCodex, /--prompt/u);
+    assert.match(shellCodex, /Convert-CodexArgsToManagedRemoteArgs/u);
+    assert.match(shellCodex, /Convert-ShellResumeStateToManagedRemoteArgs/u);
+    assert.match(shellCodex, /managed-remote/u);
+    assert.match(shellCodex, /--no-bypass-sandbox/u);
+    assert.match(shellCodex, /@\('remote'\)/u);
+    assert.doesNotMatch(shellCodex, /--dangerously-bypass-approvals-and-sandbox/u);
+    assert.doesNotMatch(shellCodex, /Resolve-CodexAgentSessionManagerRealCodex/u);
 
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
@@ -115,6 +179,8 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.match(agents, /If env vars were created or changed after App Server started/u);
     assert.match(agents, /keep using `codex-agent-session-manager mcp refresh --thread-id <thread-id>`/u);
     assert.match(agents, /Direct MCP SDK calls\s+are diagnostic only/u);
+    assert.match(agents, /When scheduling a continuation for the current thread/u);
+    assert.match(agents, /do not call\s+`codex_operation_wait` or `codex_operation_read` from that same active turn/u);
 
     const second = buildInitPlan({ workspace });
     assert.equal(second.fileUpdates.length, 0);
@@ -123,25 +189,56 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
   }
 });
 
-test('init skips package updates when package.json is absent and honors --no-agents', () => {
+test('init can install the PowerShell codex shell hook only with explicit opt-in', () => {
+  const workspace = tempWorkspace();
+  const profile = join(workspace, 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+
+    const defaultPlan = buildInitPlan({ workspace });
+    assert.equal(defaultPlan.shellHookPlan, undefined);
+
+    const plan = buildInitPlan({ workspace, installShellHook: true, shellHookProfile: profile });
+    assert.ok(plan.shellHookPlan);
+    assert.ok(plan.actions.some((action) => action.target === '<shell-profile>' && action.reason.includes('PowerShell codex function hook')));
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const installed = readFileSync(profile, 'utf8');
+    assert.match(installed, /BEGIN codex-agent-session-manager:shell-hook/u);
+    assert.match(installed, /function global:codex/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('init creates package metadata when package.json is absent and honors --no-agents', () => {
   const workspace = tempWorkspace();
   try {
     const plan = buildInitPlan({ workspace, agents: false });
-    applyInitPlan(plan);
+    applyInitPlan(plan, fakeInstaller(workspace));
 
-    assert.equal(existsSync(join(workspace, 'package.json')), false);
+    assert.equal(existsSync(join(workspace, 'package.json')), true);
     assert.equal(existsSync(join(workspace, 'AGENTS.md')), false);
     assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), true);
     const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
     if (process.platform === 'win32') {
       assert.match(config, /command = "\.codex-agent-session-manager\/windows-hidden-stdio-launcher\.exe"/u);
-      assert.match(config, /args = \["cmd\.exe", "\/d", "\/s", "\/c", "codex-agent-session-manager serve"\]/u);
+      assert.match(config, /args = \["node", "node_modules\/codex-agent-session-manager\/dist\/cli\.js", "serve"\]/u);
     } else {
-      assert.match(config, /command = "codex-agent-session-manager"/u);
-      assert.match(config, /args = \["serve"\]/u);
+      assert.match(config, /command = "node"/u);
+      assert.match(config, /args = \["node_modules\/codex-agent-session-manager\/dist\/cli\.js", "serve"\]/u);
     }
+    const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
+      private?: boolean;
+      scripts?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    assert.equal(packageJson.private, true);
+    assert.equal(packageJson.scripts?.['codex:remote'], `${packageName} remote`);
+    assert.equal(packageJson.devDependencies?.[packageName], packageVersion);
     assert.equal(existsSync(join(workspace, '.gitignore')), true);
-    assert.ok(plan.actions.some((action) => action.kind === 'skip' && action.target.endsWith('package.json')));
+    assert.ok(plan.actions.some((action) => action.kind === 'create' && action.target.endsWith('package.json')));
+    assert.ok(plan.actions.some((action) => action.kind === 'run' && action.command?.[0] === 'npm'));
     assert.ok(plan.actions.some((action) => action.kind === 'skip' && action.target.endsWith('AGENTS.md')));
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -154,13 +251,94 @@ test('init accepts package.json with UTF-8 BOM', () => {
     writeFileSync(join(workspace, 'package.json'), `\uFEFF${JSON.stringify({ name: 'bom-project' }, null, 2)}\n`);
 
     const plan = buildInitPlan({ workspace });
-    applyInitPlan(plan);
+    applyInitPlan(plan, fakeInstaller(workspace));
 
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
     };
     assert.equal(packageJson.scripts?.['codex:init'], `${packageName} init`);
     assert.equal(packageJson.scripts?.['codex:remote:dry-run'], `${packageName} remote --dry-run --no-resume`);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('generated PowerShell supervisor consumes shell resume-next state through managed remote', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('PowerShell supervisor replay is Windows-only');
+    return;
+  }
+
+  const workspace = tempWorkspace();
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const path = require('node:path');
+const workspace = process.cwd();
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+if (args[0] !== 'remote') {
+  console.error('unexpected args: ' + JSON.stringify(args));
+  process.exit(2);
+}
+const logPath = ${JSON.stringify(logPath)};
+fs.appendFileSync(logPath, JSON.stringify(args) + '\\n');
+const markerPath = path.join(workspace, '.codex-agent-session-manager', 'state', 'state-written.marker');
+if (!fs.existsSync(markerPath)) {
+  const stateDir = path.dirname(markerPath);
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(markerPath, 'written\\n');
+  fs.writeFileSync(path.join(stateDir, 'shell-resume-next.json'), JSON.stringify({
+    mode: 'managed-remote',
+    resumeMode: 'current',
+    threadId: 'thread-a',
+    prompt: 'followup prompt',
+    bypassSandbox: false,
+    enableImageGeneration: true
+  }, null, 2) + '\\n');
+}
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
+    const result = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor, 'initial prompt'],
+      { cwd: workspace, encoding: 'utf8', windowsHide: true },
+    );
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const calls = readFileSync(logPath, 'utf8')
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as string[]);
+    const expectedWorkspace = realpathSync.native(workspace);
+    assert.deepEqual(calls, [
+      ['remote', '--workspace', expectedWorkspace, '--prompt', 'initial prompt'],
+      [
+        'remote',
+        '--workspace',
+        expectedWorkspace,
+        '--resume',
+        'thread-a',
+        '--enable-image-generation',
+        '--no-bypass-sandbox',
+        '--prompt',
+        'followup prompt',
+      ],
+    ]);
+    assert.doesNotMatch(JSON.stringify(calls), /--dangerously-bypass-approvals-and-sandbox|--disable|js_repl|"-C"/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

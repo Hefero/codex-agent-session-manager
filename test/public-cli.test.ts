@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { parsePublicCommand, runPublicCommand } from '../src/public-cli.js';
+import { OperationStore } from '../src/tools/operations.js';
 
 function tempWorkspace(prefix = 'codex-agent-session-manager-public-cli-'): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -15,6 +16,16 @@ function withCwd<T>(cwd: string, run: () => T): T {
   process.chdir(cwd);
   try {
     return run();
+  } finally {
+    process.chdir(previous);
+  }
+}
+
+async function withCwdAsync<T>(cwd: string, run: () => Promise<T>): Promise<T> {
+  const previous = process.cwd();
+  process.chdir(cwd);
+  try {
+    return await run();
   } finally {
     process.chdir(previous);
   }
@@ -46,6 +57,16 @@ test('parsePublicCommand maps app-server lifecycle commands', () => {
     input: {
       dryRun: true,
       timeoutMs: 5_000,
+    },
+  });
+
+  assert.deepEqual(parsePublicCommand(['stop', '--confirm', '--delay-ms', '0']), {
+    command: 'app-server',
+    subcommand: 'stop',
+    input: {
+      confirm: true,
+      dryRun: false,
+      delayMs: 0,
     },
   });
 });
@@ -172,6 +193,26 @@ test('parsePublicCommand maps session commands', () => {
   });
 });
 
+test('parsePublicCommand maps operation commands', () => {
+  assert.deepEqual(parsePublicCommand(['operation', 'read', '--operation-id', 'op-a']), {
+    command: 'operation',
+    subcommand: 'read',
+    input: {
+      operationId: 'op-a',
+    },
+  });
+
+  assert.deepEqual(parsePublicCommand(['operation', 'wait', '--operation-id', 'op-a', '--timeout-ms', '5000', '--poll-ms', '250']), {
+    command: 'operation',
+    subcommand: 'wait',
+    input: {
+      operationId: 'op-a',
+      timeoutMs: 5_000,
+      pollMs: 250,
+    },
+  });
+});
+
 test('parsePublicCommand rejects ignored public CLI flags and extra positionals', () => {
   assert.throws(
     () => parsePublicCommand(['session', 'close', '--thread-id', 'thread-a', '--allow-scripts', '--confirm']),
@@ -196,6 +237,11 @@ test('parsePublicCommand rejects ignored public CLI flags and extra positionals'
   assert.throws(
     () => parsePublicCommand(['mcp', 'refresh', '--thread-id', 'thread-a', '--server-name', 'wrong']),
     /Unknown option for mcp refresh: --server-name/u,
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['operation', 'read', '--operation-id', 'op-a', '--confirm']),
+    /Unknown option for operation read: --confirm/u,
   );
 });
 
@@ -284,6 +330,47 @@ test('runPublicCommand prints JSON for app-server start dry-run', async () => {
   assert.equal(payload.ok, true);
   assert.equal(payload.dryRun, true);
   assert.equal(payload.plan?.appServerUrl, 'ws://127.0.0.1:4566');
+});
+
+test('runPublicCommand reads and waits for workspace operation state', async () => {
+  const workspace = tempWorkspace();
+  try {
+    const store = new OperationStore({ workspace });
+    store.create({
+      id: 'op-public',
+      kind: 'test',
+      status: 'running',
+      evidence: { threadId: 'thread-a' },
+    });
+
+    await withCwdAsync(workspace, async () => {
+      const readOutput: string[] = [];
+      const readCode = await runPublicCommand(['operation', 'read', '--operation-id', 'op-public'], {
+        output: (text) => readOutput.push(text),
+      });
+      assert.equal(readCode, 0);
+      const readPayload = JSON.parse(readOutput[0] ?? '{}') as {
+        found?: boolean;
+        operation?: { id?: string; status?: string; evidence?: { threadId?: string } };
+      };
+      assert.equal(readPayload.found, true);
+      assert.equal(readPayload.operation?.id, 'op-public');
+      assert.equal(readPayload.operation?.status, 'running');
+      assert.equal(readPayload.operation?.evidence?.threadId, 'thread-a');
+
+      const waitOutput: string[] = [];
+      const waitCode = await runPublicCommand(['operation', 'wait', '--operation-id', 'op-public', '--timeout-ms', '0'], {
+        output: (text) => waitOutput.push(text),
+      });
+      assert.equal(waitCode, 0);
+      const waitPayload = JSON.parse(waitOutput[0] ?? '{}') as { found?: boolean; timedOut?: boolean; completed?: boolean };
+      assert.equal(waitPayload.found, true);
+      assert.equal(waitPayload.timedOut, true);
+      assert.equal(waitPayload.completed, false);
+    });
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test('runPublicCommand reports missing required thread id', async () => {

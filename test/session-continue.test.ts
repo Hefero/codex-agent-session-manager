@@ -130,6 +130,8 @@ test('buildSessionContinuePayload creates durable operation and schedules prompt
     const stored = store.read(String(payload.operationId));
     assert.equal(stored?.kind, 'session_continue');
     assert.equal(stored?.status, 'running');
+    assert.match(String(stored?.nextAction), /Let the current turn finish/u);
+    assert.match(String(stored?.nextAction), /later turn or another thread/u);
     assert.doesNotMatch(JSON.stringify(stored), /secret continuation prompt/u);
   } finally {
     fixture.cleanup();

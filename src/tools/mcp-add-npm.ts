@@ -1,8 +1,8 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, normalize } from 'node:path';
 import { z } from 'zod';
 
+import { runNpm, type NpmRunResult } from '../npm.js';
 import { redactValue } from '../security/redaction.js';
 import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from '../security/workspace.js';
 
@@ -64,13 +64,6 @@ export const mcpAddNpmInputSchema = {
 
 const mcpAddNpmInputObject = z.object(mcpAddNpmInputSchema);
 type McpAddNpmInput = z.infer<typeof mcpAddNpmInputObject>;
-
-export interface NpmRunResult {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  error?: Error;
-}
 
 export type NpmRunner = (args: readonly string[], options: { cwd: string }) => NpmRunResult;
 
@@ -157,36 +150,12 @@ function minimalPackageJson(workspace: string): string {
   }, null, 2)}\n`;
 }
 
-function npmSpawnCommand(args: readonly string[]): { command: string; args: string[] } {
-  if (process.platform === 'win32') {
-    return { command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm', ...args] };
-  }
-  return { command: 'npm', args: [...args] };
-}
-
 function npmInstallArgs(input: { packageSpec: string; allowScripts: boolean }): string[] {
   const args = ['install', '--save-dev'];
   if (!input.allowScripts) args.push('--ignore-scripts');
+  args.push('--no-audit', '--no-fund', '--cache', './.npm-cache');
   args.push(input.packageSpec);
   return args;
-}
-
-function runNpm(args: readonly string[], options: { cwd: string }): NpmRunResult {
-  const command = npmSpawnCommand(args);
-  const result = spawnSync(command.command, command.args, {
-    cwd: options.cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    shell: false,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    ...(result.error ? { error: result.error } : {}),
-  };
 }
 
 function packageJsonPathFor(workspace: string, packageName: string): string {
@@ -276,7 +245,7 @@ function nextActionFor(input: { serverName: string; envVars: string[]; dryRun: b
   const envStep = input.envVars.length > 0
     ? ' Ensure the named env vars are visible to the App Server process; restart or relaunch the managed App Server first if they were just created or changed.'
     : '';
-  return `${installStep}${envStep} Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${input.serverName}; do not stop at MCP status alone, and do not prove by launching the stdio entrypoint in a visible terminal because it can leave orphan node/cmd windows.`.trim();
+  return `${installStep}${envStep} Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${input.serverName}. Once that target tool call succeeds, stop validation and report the result; do not keep probing, do not stop at MCP status alone, and do not prove by launching the stdio entrypoint in a visible terminal because it can leave orphan node/cmd windows.`.trim();
 }
 
 function mcpServerBlock(input: { serverName: string; packageName: string; entrypoint: string; extraArgs: string[]; envVars: string[] }): string {

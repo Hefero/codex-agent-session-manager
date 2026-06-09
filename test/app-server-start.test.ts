@@ -51,6 +51,7 @@ function fakePlan(options: RemoteOptions): RemotePlan {
     tui: {
       command: 'codex-test',
       args: ['--remote', appServerUrl],
+      promptIncluded: false,
     },
     stateFile: join(workspace, '.codex-agent-session-manager', 'state', 'app-server.json'),
   };

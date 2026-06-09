@@ -109,6 +109,114 @@ test('buildAppServerStatusPayload reports managed state, process tree, and ready
   }
 });
 
+test('buildAppServerStatusPayload keeps processAlive when process tree output is disabled', async () => {
+  const fixture = tempStore();
+  const { workspace } = fixture;
+  try {
+    writeOwnedAppServerState(workspace);
+    const payload = await buildAppServerStatusPayload(
+      {
+        probeReady: false,
+        includeProcessTree: false,
+      },
+      {
+        workspace,
+        processLister: () => processFixture(workspace),
+      },
+    );
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.reconciliation, undefined);
+    const target = payload.managedAppServer as { canStop?: boolean; processAlive?: boolean; processTreeCount?: number };
+    assert.equal(target.processAlive, true);
+    assert.equal(target.canStop, true);
+    assert.equal(target.processTreeCount, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('buildAppServerStatusPayload does not reconcile missing process when ready probe succeeds', async () => {
+  const fixture = tempStore();
+  const { workspace, store } = fixture;
+  try {
+    writeOwnedAppServerState(workspace);
+    store.create({
+      id: 'op-stop-ready',
+      kind: 'app_server_stop',
+      status: 'running',
+      evidence: { background: { scheduled: true } },
+    });
+
+    const payload = await buildAppServerStatusPayload(
+      {
+        probeReady: true,
+      },
+      {
+        workspace,
+        store,
+        processLister: () => [],
+        readyProbe: async () => true,
+      },
+    );
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.reconciliation, undefined);
+    assert.deepEqual(payload.ready, { probed: true, ok: true, timeoutMs: 1000 });
+    const target = payload.managedAppServer as { stateStatus?: string; pid?: number | null; owned?: boolean; processAlive?: boolean };
+    assert.equal(target.stateStatus, 'ready');
+    assert.equal(target.pid, 40);
+    assert.equal(target.owned, true);
+    assert.equal(target.processAlive, false);
+    assert.equal(store.read('op-stop-ready')?.status, 'running');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('buildAppServerStatusPayload reconciles stale ready state when managed process is gone', async () => {
+  const fixture = tempStore();
+  const { workspace, store } = fixture;
+  try {
+    writeOwnedAppServerState(workspace);
+    store.create({
+      id: 'op-stop-stale',
+      kind: 'app_server_stop',
+      status: 'running',
+      evidence: { background: { scheduled: true } },
+    });
+
+    const payload = await buildAppServerStatusPayload(
+      {
+        probeReady: false,
+        includeProcessTree: true,
+      },
+      {
+        workspace,
+        store,
+        processLister: () => [],
+      },
+    );
+
+    assert.equal(payload.ok, true);
+    const reconciliation = payload.reconciliation as { stateUpdated?: boolean; completedStopOperationIds?: string[] };
+    assert.equal(reconciliation.stateUpdated, true);
+    assert.deepEqual(reconciliation.completedStopOperationIds, ['op-stop-stale']);
+    const target = payload.managedAppServer as { stateStatus?: string; pid?: number | null; owned?: boolean; processAlive?: boolean };
+    assert.equal(target.stateStatus, 'stopped');
+    assert.equal(target.pid, null);
+    assert.equal(target.owned, false);
+    assert.equal(target.processAlive, false);
+
+    const state = readAppServerStateFile(appServerStateFileForWorkspace(workspace, 'primary'), 'primary').state;
+    assert.equal(state?.status, 'stopped');
+    assert.equal(state?.pid, null);
+    assert.equal(store.read('op-stop-stale')?.status, 'completed');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('buildAppServerStopPayload dry run reports target without creating operation', () => {
   const fixture = tempStore();
   const { workspace, store } = fixture;

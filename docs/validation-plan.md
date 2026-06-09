@@ -55,7 +55,12 @@ The smoke must prove:
 - CLI public subcommands reject ignored cross-command flags and extra
   positionals before scheduling any guarded operation.
 - CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
-  writing files and shows `--ignore-scripts` by default.
+  writing files and shows `--ignore-scripts`, `--no-audit`, `--no-fund`, and
+  workspace-local `--cache ./.npm-cache` by default.
+- npm execution helpers must avoid direct `spawnSync('npm.cmd', ..., {
+  shell:false })` on Windows. The preferred Windows path is `node.exe
+  <node-prefix>/node_modules/npm/bin/npm-cli.js ...`, with `cmd.exe /d /c
+  npm.cmd ...` only as fallback.
 - CLI/MCP `mcp add npm` supports secret-bearing MCPs through `env_vars` /
   `--env-var` without storing secret values in `.codex/config.toml`.
 - CLI/MCP `mcp add npm` reports that `env_vars` stores names only, and that
@@ -114,12 +119,16 @@ Current checks:
 - record diagnostic MCP status before/after reload when a thread id is supplied.
 - compose MCP reload plus continuation through `codex_mcp_refresh`, preserving
   before/after MCP status, idle/stable wait evidence, and `turn/start`
-  evidence in one operation.
+  evidence in one operation. Completion of this operation means `turn/start`
+  was accepted, not that the child turn finished or proved the changed tool.
 - schedule a continuation through durable operation state and a detached child
   process;
 - pass continuation prompt text outside argv, structured output, operation
   evidence, and failure evidence;
 - wait for idle/stable thread boundary before `turn/start`.
+- when the target is the current thread, schedule continuation and let the
+  active turn finish before waiting or reading the operation from a later turn;
+  same-turn waits keep the target thread active.
 - prove `codex_session_continue` by a real model-callable invocation, then
   confirm the child turn started and replied from the scheduled continuation.
 - report matching remote TUI process roots for explicit-thread cleanup in
@@ -150,6 +159,12 @@ Current checks:
   plan without launching a TUI.
 - call `codex_app_server_status` without destructive side effects and verify it
   reports only primary workspace-managed App Server state/process evidence.
+- verify `codex_app_server_status` reconciles stale ready state to stopped when
+  managed state points at a dead process, and completes any stuck managed
+  `app_server_stop` operation with reconciliation evidence.
+- verify `codex_app_server_status --no-process-tree` still reports
+  `processAlive:true` when the recorded pid exists, and does not reconcile a
+  process-list miss to stopped when `/readyz` succeeds.
 - dry-run `codex_app_server_stop`, confirm real execution requires
   `dryRun:false` and `confirm:true`, and verify the real operation only targets
   the owned workspace App Server process tree.
@@ -181,9 +196,14 @@ Current checks:
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.
 - initialize target projects through project-scoped `.codex/config.toml`, local
-  runtime ignore rules, optional `AGENTS.md`, and package scripts when
-  `package.json` already exists.
+  runtime/cache ignore rules, optional `AGENTS.md`, and project-local npm
+  metadata. Empty workspaces should get a minimal `package.json`, a
+  devDependency on this package, and a local install using
+  `--ignore-scripts --no-audit --no-fund --cache ./.npm-cache`.
 - keep init idempotent and avoid editing user global Codex config.
+- keep shell profile edits out of default init. Validate
+  `init --install-shell-hook` as the explicit opt-in path, including dry-run
+  with no profile write and real install against a disposable profile path.
 - deinitialize project-scoped scaffold with dry-run-by-default semantics,
   `--confirm` for real edits, and `--remove-runtime` before deleting local
   runtime state.
@@ -197,6 +217,27 @@ Current checks:
   `--remove-added-mcps` is explicitly passed.
 - keep direct MCP SDK calls classified as diagnostic only; final proof remains
   a model-callable MCP tool call from the continuation/replacement boundary.
+- keep hard process reset classified as fallback evidence unless explicitly
+  selected: process-level TUI close plus `codex resume <threadId> --remote
+  <url> ... <prompt>` can inject a prompt without App Server `turn/start`, but
+  it must prove the target by dry-run process identity first and must not stop
+  the App Server.
+- validate `codex_session_hard_relaunch` as the plain-`codex` fallback: the
+  current TUI root is discovered from MCP process ancestry, the relaunch prompt
+  is non-secret, the relaunched Codex process resumes the current thread by
+  default, the new process is started before the old root is stopped, and proof
+  comes from the relaunched session's observable work.
+- validate the opt-in PowerShell shell hook separately: install is
+  dry-run-by-default, writes only a marked profile block with `--confirm`,
+  uninstall removes only that block, and initialized workspaces route `codex`
+  through the managed `remote` path rather than plain Codex. Validate both
+  `codex "<prompt>"` -> managed `remote --prompt` and
+  `codex resume <threadId> "<prompt>"` -> managed `remote --resume`.
+  `handoffMode: "shell-resume-next"` writes local managed-remote resume-next
+  state instead of opening a new terminal directly, and the supervisor converts
+  that state into `remote --resume/--prompt` arguments. When
+  `resumeMode: "current"` cannot infer a thread id, it must refuse; only
+  `resumeMode: "fresh"` may intentionally open a new thread.
 - package only the intended npm artifact files: `dist/`, `scripts/*.cs`,
   `README.md`, `LICENSE`, and package metadata.
 - reject package inclusion of source, tests, docs, `.codex*` runtime config,
@@ -252,6 +293,19 @@ Expected evidence:
 - The fresh session calls
   `codex_agent_session_manager/codex_session_manager_probe` without running
   `remote`.
+- Plain `codex` sessions can call project MCP tools, but self-management
+  operations that require an App Server URL, managed launch state, or automatic
+  continuation are only expected to work after a managed `remote`/App Server
+  path is active or an explicit loopback App Server URL is configured.
+- `codex_session_hard_relaunch` is the explicit exception for process-level
+  self-management from plain `codex`. A disposable Windows probe launched
+  plain `codex`, had the first agent call the tool, and verified the relaunched
+  session created `hard-relaunch-proof.txt` containing exactly
+  `hard-relaunch-ok`.
+- Same-terminal relaunch is a separate opt-in PowerShell hook probe. Install
+  the hook, restart/dot-source the profile, run plain `codex` from the
+  initialized project, and ask the agent to call `codex_session_hard_relaunch`
+  with `handoffMode: "shell-resume-next"`.
 
 Repo-local Codex plugin packaging remains a future distribution option, not
 the release proof path. A probe showed that a bundled-MCP plugin works after

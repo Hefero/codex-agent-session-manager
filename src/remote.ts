@@ -31,6 +31,7 @@ export interface RemoteOptions {
   resumeLast?: boolean;
   pick?: boolean;
   noResume?: boolean;
+  prompt?: string;
   dryRun?: boolean;
   enableImageGeneration?: boolean;
   noBypassSandbox?: boolean;
@@ -54,6 +55,7 @@ export interface RemotePlan {
   tui: {
     command: string;
     args: string[];
+    promptIncluded: boolean;
   };
   stateFile: string;
 }
@@ -82,6 +84,7 @@ Options:
   --resume-last               Resume the most recent thread.
   --pick                      Open Codex's resume picker.
   --no-resume                 Start/reuse App Server and exit before launching Codex TUI.
+  --prompt <text>             Non-secret prompt passed to the launched Codex TUI.
   --dry-run                   Print resolved commands without starting processes.
   --enable-image-generation   Do not pass --disable image_generation.
   --no-bypass-sandbox         Do not pass --dangerously-bypass-approvals-and-sandbox.
@@ -139,6 +142,9 @@ export function parseRemoteArgs(argv: readonly string[]): RemoteOptions {
         break;
       case '--no-resume':
         options.noResume = true;
+        break;
+      case '--prompt':
+        options.prompt = readValue();
         break;
       case '--dry-run':
         options.dryRun = true;
@@ -371,6 +377,7 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
     workspace,
     mode,
     threadId: options.sessionId,
+    prompt: options.prompt,
     bypassSandbox: options.noBypassSandbox !== true,
     enableImageGeneration: options.enableImageGeneration,
   });
@@ -391,12 +398,16 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
     tui: {
       command: codexCommand,
       args: tuiArgs,
+      promptIncluded: Boolean(options.prompt && options.prompt.length > 0),
     },
     stateFile: appServerStateFileForWorkspace(workspace, 'primary'),
   };
 }
 
 export function remotePlanPreview(plan: RemotePlan): Record<string, unknown> {
+  const tuiArgs = plan.tui.promptIncluded
+    ? plan.tui.args.map((arg, index) => (index === plan.tui.args.length - 1 ? '<prompt>' : arg))
+    : plan.tui.args;
   return redactValue(
     {
       workspace: '<workspace>',
@@ -414,7 +425,8 @@ export function remotePlanPreview(plan: RemotePlan): Record<string, unknown> {
       },
       tui: {
         command: redactSensitiveText(plan.tui.command),
-        args: redactArgv(plan.tui.args, { workspace: plan.workspace }),
+        args: redactArgv(tuiArgs, { workspace: plan.workspace }),
+        initialInputIncluded: plan.tui.promptIncluded,
       },
     },
     { workspace: plan.workspace },

@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: Phase 10 package/install hardening implemented
+Status: post-alpha real-replay hardening in progress
 
 ## Bootstrap Workflow
 
@@ -90,6 +90,8 @@ Implemented:
   raw thread payloads.
 - Marker matches outrank active-only and cwd-only heuristics.
 - Stored thread matches are low-confidence recovery hints.
+- Recent operation records are also low-confidence recovery hints when loaded
+  thread listing is empty or inconclusive.
 - Operation records track id, kind, status, timestamps, evidence, failure, and
   next action.
 - `codex_operation_read` reads operation state by id.
@@ -153,6 +155,9 @@ Implemented:
   schedules a detached child process.
 - The continuation child waits for an explicit target thread to reach the
   idle/stable boundary, then calls `turn/start`.
+- If the explicit target is the current thread, the scheduling turn must end
+  before waiting on the operation; otherwise the active turn itself prevents the
+  background child from observing the idle boundary.
 - Continuation prompts are passed through child environment and are not returned
   in operation evidence or argv.
 
@@ -481,15 +486,15 @@ Implemented:
 - Project-scoped `.codex/config.toml` registration for
   `codex_agent_session_manager`, so a normal `codex` session launched from the
   project can call the session-manager tools without using `remote`.
-- When `package.json` exists, the generated MCP config uses the project-local
+- The generated MCP config uses the project-local
   `node_modules/codex-agent-session-manager/dist/cli.js` entrypoint so native
   `codex` launchers do not depend on a globally installed npm shim.
 - On Windows, that project-scoped MCP config uses the generated
-  `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe`; local
-  package installs run through `node node_modules/.../dist/cli.js serve`, and
-  no-package workspaces fall back to hidden `cmd.exe /d /s /c`.
-- `.gitignore` entry for `.codex-agent-session-manager/` runtime state.
-- `package.json` updates only when the file already exists:
+`.codex-agent-session-manager/windows-hidden-stdio-launcher.exe`; local
+  package installs run through `node node_modules/.../dist/cli.js serve`.
+- `.gitignore` entries for `.codex-agent-session-manager/` runtime state and
+  workspace-local `.npm-cache/`.
+- `package.json` is created when absent and updated when present:
   - `devDependencies.codex-agent-session-manager`
   - `codex:init`
   - `codex:init:dry-run`
@@ -498,6 +503,12 @@ Implemented:
   - `codex:app-server:status`
   - `codex:app-server:stop`
 - Small managed `AGENTS.md` block by default, skipped with `--no-agents`.
+- Optional `--install-shell-hook` installs or refreshes the marked PowerShell
+  `codex` function hook as an explicit opt-in; default `init` remains
+  project-scoped and does not edit shell profiles.
+- If the local package entrypoint is missing, `init` installs the package as a
+  project devDependency with `--ignore-scripts --no-audit --no-fund --cache
+  ./.npm-cache`.
 - Windows hidden App Server launcher preparation uses the same launcher helper
   as `remote` and remains scoped to local runtime state.
 - Repo-local plugin marketplace integration was probed. A bundled-MCP plugin
@@ -509,8 +520,8 @@ Implemented:
 Validation:
 
 - Unit tests cover argument parsing, redacted dry-run output, no-write dry-run,
-  target project application, idempotency, missing `package.json`, and
-  `--no-agents`.
+  target project application, idempotency, empty-workspace package creation,
+  `--install-shell-hook`, and `--no-agents`.
 - A fresh `codex exec` probe in a temporary project with `package.json`, local
   `codex-agent-session-manager` dependency, generated hidden Windows MCP
   config, and no `remote` call invoked
@@ -576,3 +587,84 @@ Validation:
   through `cmd.exe /c` instead of launching native `codex.exe` directly, and
   records App Server loaded-thread verification before completing deterministic
   launch operations.
+
+## Phase 11: Real Agent Replay Hardening
+
+- Use disposable initialized projects to replay agent-managed MCP installation,
+  refresh, proof, and cleanup flows.
+- Reduce failure modes observed when an agent uses the tool from a plain
+  `codex` session or from a managed remote session.
+- Keep the project-scoped contract: no user global Codex config edits and no
+  raw terminal cleanup as the expected path.
+
+Status: in progress.
+
+Implemented:
+
+- `init` now makes empty workspaces self-contained instead of requiring a
+  pre-existing npm project or global binary fallback.
+- `init` and `mcp add npm` use a workspace-local npm cache so Windows agents do
+  not fall into PowerShell `npm.ps1` execution-policy issues or user-global npm
+  cache permissions during normal flows.
+- Generated `AGENTS.md` now tells agents to prefer `mcp add npm`, avoid direct
+  stdio server launches, stop once the target callable MCP tool succeeds, and
+  avoid direct SDK fallbacks as proof.
+- `codex_mcp_refresh` and `codex_session_continue` evidence now explicitly
+  says operation completion means `turn/start` was accepted, not that the child
+  turn finished.
+- `codex_app_server_status` reconciles stale managed ready state when the
+  recorded App Server process is gone, including stuck managed stop operations.
+- `deinit` removes the managed `.npm-cache/` ignore rule along with the runtime
+  ignore rule while preserving general secret-file ignore entries.
+- Experimental hard process reset probes now have concrete evidence:
+  - fresh remote TUI launch on Windows produces a separate
+    `cmd.exe -> node.exe -> codex.exe` tree, while the App Server remains under
+    `windows-hidden-stdio-launcher.exe -> codex.exe`;
+  - fresh TUI argv does not include the runtime thread id, so hard close needs
+    the explicit workspace+URL fallback after the target thread is discovered
+    from App Server launch verification;
+  - hard close of the TUI tree leaves the App Server alive;
+  - relaunching the same thread with `session launch --mode session
+    --thread-id <id> --prompt <text>` processes the prompt without using
+    App Server `turn/start`. A `thread/read` probe confirmed both the initial
+    fresh-launch marker and the relaunch prompt marker in the same thread.
+- The hard reset path is currently classified as an experimental fallback over
+  existing process launch/close primitives, not as the default refresh model.
+- `codex_session_hard_relaunch` is implemented as the tool form of that
+  fallback for plain `codex` sessions. It finds the current TUI from the MCP
+  server process ancestry, resumes the current thread by default with a
+  non-secret prompt, then attempts to stop the old TUI root. If the thread id
+  cannot be inferred, the tool refuses and requires explicit `threadId` or
+  `resumeMode: "fresh"`.
+- An opt-in PowerShell shell-hook probe is implemented but not promoted to the
+  default path. `shell-hook install --confirm` or
+  `init --install-shell-hook` adds a marked `codex` function to the PowerShell
+  profile; initialized workspaces provide a local supervisor script that routes
+  `codex` to `codex-agent-session-manager remote`, preserving the familiar
+  entry command while starting/reusing the managed App Server.
+  The same script consumes `shell-resume-next` state with
+  `mode: "managed-remote"` and relaunches the managed remote flow in the same
+  terminal.
+
+Validation:
+
+- Unit coverage added for empty-workspace init/install behavior, local npm
+  cache install args, stale App Server state reconciliation, `--no-process-tree`
+  status handling, `/readyz`-alive reconciliation suppression, and managed
+  `.npm-cache/` deinit cleanup.
+- Unit coverage added for hard relaunch target discovery, redacted dry-run
+  output, default resume behavior, explicit fresh fallback, background
+  scheduling, operation argv parsing, and launch-before-stop ordering.
+- Unit coverage added for shell-hook dry-run/install/status/uninstall, managed
+  remote shell-supervisor generation, and `handoffMode: "shell-resume-next"`
+  managed-remote state writing and consumption into
+  `remote --resume/--prompt` arguments.
+- Real replay findings preserved in `docs/validation-plan.md`: plain `codex`
+  can expose project MCP tools, but self-management operations that need an App
+  Server URL or continuation require a managed App Server path or explicit
+  loopback URL.
+- A disposable plain-`codex` replay proved the hard relaunch tool can bridge
+  that gap for process-level self-management: Stage1 called
+  `codex_session_hard_relaunch`, Stage2 launched without App Server
+  `turn/start`, and `hard-relaunch-proof.txt` contained exactly
+  `hard-relaunch-ok`.

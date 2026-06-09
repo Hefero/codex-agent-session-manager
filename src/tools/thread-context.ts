@@ -6,6 +6,7 @@ import { resolveAppServerUrl } from '../app-server/config.js';
 import type { ThreadListEntry, ThreadReadResult } from '../app-server/protocol.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
 import { resolveWorkspaceCwd } from '../security/workspace.js';
+import { OperationStore, type OperationRecord, type OperationStatus } from './operations.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_STORED_LIMIT = 10;
@@ -61,6 +62,16 @@ export interface StoredThreadCandidate {
   ephemeral: boolean | null;
 }
 
+export interface OperationThreadCandidate {
+  threadId: string;
+  operationId: string;
+  operationKind: string;
+  operationStatus: OperationStatus;
+  updatedAt: string;
+  source: 'operation-requested-thread' | 'operation-turn-start-thread';
+  turnId: string | null;
+}
+
 export interface ThreadContextRecommendation {
   recommendedThreadId: string | null;
   recommendedThreadIdSource: string | null;
@@ -103,6 +114,16 @@ function publicStatus(status: unknown): { type: string | null; activeFlags: stri
     type: typeof statusRecord?.type === 'string' ? statusRecord.type : null,
     activeFlags: stringArrayFrom(statusRecord?.activeFlags),
   };
+}
+
+function nestedRecord(value: unknown, key: string): Record<string, unknown> | null {
+  return recordFrom(recordFrom(value)?.[key]);
+}
+
+function nestedString(value: unknown, firstKey: string, secondKey: string): string | null {
+  const nested = nestedRecord(value, firstKey);
+  const nestedValue = nested?.[secondKey];
+  return typeof nestedValue === 'string' && nestedValue.length > 0 ? nestedValue : null;
 }
 
 function turnStatus(turn: unknown): string | null {
@@ -197,6 +218,31 @@ export function summarizeStoredThread(entry: ThreadListEntry, requestedCwd: stri
   };
 }
 
+export function summarizeOperationThreadCandidates(operations: readonly OperationRecord[]): OperationThreadCandidate[] {
+  const newestByThread = new Map<string, OperationThreadCandidate>();
+  const newestFirst = [...operations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+
+  for (const operation of newestFirst) {
+    const evidence = operation.evidence;
+    const turnStartThreadId = nestedString(evidence, 'turnStart', 'threadId');
+    const requestedThreadId = nestedString(evidence, 'requested', 'threadId');
+    const threadId = turnStartThreadId ?? requestedThreadId;
+    if (threadId === null || newestByThread.has(threadId)) continue;
+
+    newestByThread.set(threadId, {
+      threadId,
+      operationId: operation.id,
+      operationKind: operation.kind,
+      operationStatus: operation.status,
+      updatedAt: operation.updatedAt,
+      source: turnStartThreadId !== null ? 'operation-turn-start-thread' : 'operation-requested-thread',
+      turnId: nestedString(evidence, 'turnStart', 'turnId'),
+    });
+  }
+
+  return [...newestByThread.values()];
+}
+
 function selection(threadId: string, source: string, confidence: RecommendationConfidence): ThreadContextRecommendation {
   return {
     recommendedThreadId: threadId,
@@ -219,9 +265,14 @@ function isNotWaitingOnApproval(candidate: ThreadContextCandidate): boolean {
   return !candidate.activeFlags?.includes('waitingOnApproval');
 }
 
+function isLoadedCandidate(candidate: ThreadContextCandidate): boolean {
+  return candidate.status !== 'notLoaded';
+}
+
 export function selectThreadContextRecommendation(
   candidates: readonly ThreadContextCandidate[],
   storedCandidates: readonly StoredThreadCandidate[] = [],
+  operationCandidates: readonly OperationThreadCandidate[] = [],
 ): ThreadContextRecommendation {
   const markerMatches = candidates.filter((candidate) => candidate.markerMatched);
   if (markerMatches.length === 1) {
@@ -231,25 +282,21 @@ export function selectThreadContextRecommendation(
     return noSelection(true);
   }
 
-  if (candidates.length === 1) {
-    return selection(candidates[0]!.threadId, 'sole-loaded-thread', 'high');
+  const soleCandidate = candidates[0];
+  if (candidates.length === 1 && soleCandidate !== undefined && soleCandidate.cwdMatches && isLoadedCandidate(soleCandidate)) {
+    return selection(soleCandidate.threadId, 'sole-loaded-thread', 'high');
   }
 
   const activeCwdNotWaiting = candidates.filter(
-    (candidate) => candidate.status === 'active' && candidate.cwdMatches && isNotWaitingOnApproval(candidate),
+    (candidate) => candidate.status === 'active' && candidate.cwdMatches && isLoadedCandidate(candidate) && isNotWaitingOnApproval(candidate),
   );
   if (activeCwdNotWaiting.length === 1) {
     return selection(activeCwdNotWaiting[0]!.threadId, 'heuristic-active-loaded-cwd-not-waiting-on-approval', 'medium');
   }
 
-  const cwdMatches = candidates.filter((candidate) => candidate.cwdMatches);
+  const cwdMatches = candidates.filter((candidate) => candidate.cwdMatches && isLoadedCandidate(candidate));
   if (cwdMatches.length === 1) {
     return selection(cwdMatches[0]!.threadId, 'heuristic-loaded-cwd', 'low');
-  }
-
-  const activeNotWaiting = candidates.filter((candidate) => candidate.status === 'active' && isNotWaitingOnApproval(candidate));
-  if (activeNotWaiting.length === 1) {
-    return selection(activeNotWaiting[0]!.threadId, 'heuristic-active-loaded', 'low');
   }
 
   const storedMatches = storedCandidates.filter(
@@ -260,7 +307,20 @@ export function selectThreadContextRecommendation(
     return selection(storedMatch.threadId, 'stored-thread-list', 'low');
   }
 
-  return noSelection(candidates.length > 1 || storedCandidates.length > 1 || storedMatches.length > 1);
+  if (operationCandidates.length === 1) {
+    return selection(operationCandidates[0]!.threadId, 'operation-state-thread', 'low');
+  }
+
+  if (operationCandidates.length > 1) {
+    return noSelection(true);
+  }
+
+  const activeNotWaiting = candidates.filter((candidate) => candidate.status === 'active' && isLoadedCandidate(candidate) && isNotWaitingOnApproval(candidate));
+  if (activeNotWaiting.length === 1) {
+    return selection(activeNotWaiting[0]!.threadId, 'heuristic-active-loaded', 'low');
+  }
+
+  return noSelection(candidates.length > 1 || storedCandidates.length > 1 || storedMatches.length > 1 || operationCandidates.length > 1);
 }
 
 export async function buildThreadContextPayload(input: ThreadContextInput): Promise<Record<string, unknown>> {
@@ -322,7 +382,8 @@ export async function buildThreadContextPayload(input: ThreadContextInput): Prom
       storedCandidates = stored.threads.map((entry) => summarizeStoredThread(entry, cwd));
     }
 
-    const recommendation = selectThreadContextRecommendation(candidates, storedCandidates ?? []);
+    const operationCandidates = summarizeOperationThreadCandidates(new OperationStore({ workspace: cwd }).list());
+    const recommendation = selectThreadContextRecommendation(candidates, storedCandidates ?? [], operationCandidates);
     const payload: Record<string, unknown> = {
       ok: true,
       appServerUrl: redactSensitiveText(url),
@@ -332,11 +393,13 @@ export async function buildThreadContextPayload(input: ThreadContextInput): Prom
       ambiguous: recommendation.ambiguous,
       loadedThreadIds: loaded.threadIds,
       candidates,
+      operationCandidates,
       notes: [
         'Use recommendedThreadId as diagnostic guidance; pass an explicit threadId before mutating a session.',
         'A unique marker match in loaded turns outranks active-only heuristics.',
         'Threads waitingOnApproval are deprioritized for active-thread heuristics.',
         'Stored-thread matches are low-confidence recovery hints; prefer loaded marker matches.',
+        'Operation-state thread ids are low-confidence recovery hints when loaded thread listing is empty or inconclusive.',
       ],
     };
     if (storedCandidates !== undefined) {

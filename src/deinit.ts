@@ -268,7 +268,9 @@ function removeGeneratedGitignoreEntry(content: string | null): string | null {
   const lines = content.split(/\r?\n/u);
   const kept = lines.filter((line) => {
     const trimmed = line.trim();
-    return trimmed !== `${PRIMARY_STATE_DIR_NAME}/` && trimmed !== PRIMARY_STATE_DIR_NAME;
+    return trimmed !== `${PRIMARY_STATE_DIR_NAME}/`
+      && trimmed !== PRIMARY_STATE_DIR_NAME
+      && trimmed !== '.npm-cache/';
   });
   return finalizeFileContent('.gitignore', kept.join('\n'));
 }
@@ -438,7 +440,7 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
     gitignorePath,
     gitignoreCurrent,
     removeGeneratedGitignoreEntry(gitignoreCurrent),
-    'remove local runtime ignore rule',
+    'remove local runtime/cache ignore rules',
   );
 
   const packageJsonPath = workspacePath(workspace, 'package.json');

@@ -114,7 +114,16 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
     assert.equal(payload.dryRun, false);
     assert.equal(payload.confirmRequired, false);
     assert.equal(payload.lifecycleScriptsAllowed, false);
-    assert.deepEqual(npmCalls, [['install', '--save-dev', '--ignore-scripts', '@modelcontextprotocol/server-everything']]);
+    assert.deepEqual(npmCalls, [[
+      'install',
+      '--save-dev',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--cache',
+      './.npm-cache',
+      '@modelcontextprotocol/server-everything',
+    ]]);
     assert.deepEqual(payload.args, [
       'node_modules/@modelcontextprotocol/server-everything/dist/index.js',
       'stdio',
@@ -239,7 +248,15 @@ test('mcp add npm can explicitly allow npm lifecycle scripts', () => {
 
     assert.equal(payload.ok, true);
     assert.equal(payload.lifecycleScriptsAllowed, true);
-    assert.deepEqual(npmCalls, [['install', '--save-dev', '@modelcontextprotocol/server-everything']]);
+    assert.deepEqual(npmCalls, [[
+      'install',
+      '--save-dev',
+      '--no-audit',
+      '--no-fund',
+      '--cache',
+      './.npm-cache',
+      '@modelcontextprotocol/server-everything',
+    ]]);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

@@ -20,7 +20,15 @@ function tempWorkspace(): string {
 
 function initWorkspace(workspace: string): void {
   writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
-  applyInitPlan(buildInitPlan({ workspace }));
+  applyInitPlan(buildInitPlan({ workspace }), {
+    npmInstaller(input) {
+      assert.equal(resolve(input.workspace), resolve(workspace));
+      const distDir = join(workspace, 'node_modules', packageName, 'dist');
+      mkdirSync(distDir, { recursive: true });
+      writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
 }
 
 test('parseDeinitArgs maps workspace, confirm, json, runtime, and added MCP removal', () => {
@@ -102,6 +110,7 @@ test('deinit confirm removes scaffold and optional runtime while leaving npm pac
     assert.equal(existsSync(join(workspace, '.gitignore')), true);
     const gitignore = readFileSync(join(workspace, '.gitignore'), 'utf8');
     assert.doesNotMatch(gitignore, /\.codex-agent-session-manager\//u);
+    assert.doesNotMatch(gitignore, /^\.npm-cache\/$/mu);
     assert.match(gitignore, /^\.secrets\/$/mu);
     assert.match(gitignore, /^\*token\*\.json$/mu);
     assert.equal(existsSync(join(workspace, 'AGENTS.md')), false);
@@ -324,7 +333,15 @@ test('init does not mistake managed mcp-add blocks for the base manager block', 
       ].join('\n'),
     );
 
-    applyInitPlan(buildInitPlan({ workspace, agents: false }));
+    applyInitPlan(buildInitPlan({ workspace, agents: false }), {
+      npmInstaller(input) {
+        assert.equal(resolve(input.workspace), resolve(workspace));
+        const distDir = join(workspace, 'node_modules', packageName, 'dist');
+        mkdirSync(distDir, { recursive: true });
+        writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
     const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
     assert.match(config, /codex-agent-session-manager:mcp-add:everything/u);
     assert.match(config, /\[mcp_servers\.everything\]/u);

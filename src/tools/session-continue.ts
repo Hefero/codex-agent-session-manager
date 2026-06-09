@@ -22,7 +22,8 @@ const MAX_CONTINUATION_STABLE_MS = 10_000;
 const MAX_PROMPT_CHARS = 4_000;
 const MAX_ATTEMPTS_EVIDENCE = 20;
 const INTERNAL_COMMAND = 'run-session-continue-operation';
-const CONTINUE_NEXT_ACTION = 'Use codex_operation_wait with this operationId, then codex_operation_read for final continuation evidence.';
+const CONTINUE_NEXT_ACTION =
+  'Let the current turn finish when this targets the current thread. The background operation waits for the target thread to become idle, starts the continuation, and only that continuation can provide final callable proof. Use codex_operation_wait/read only from a later turn or another thread.';
 
 const appServerUrlSchema = z
   .string()
@@ -508,6 +509,7 @@ export async function runSessionContinueOperation(
     });
     evidence.turnStart = {
       requested: true,
+      operationCompletionMeaning: 'turn-started-not-turn-finished',
       threadId: input.threadId,
       cwdPreview: '<workspace>',
       clientUserMessageId,
@@ -517,7 +519,7 @@ export async function runSessionContinueOperation(
 
     return store.complete(input.operationId, {
       evidence,
-      nextAction: 'Continuation turn started. Count proof only when that fresh turn calls the target model-callable tool.',
+      nextAction: 'Continuation turn was started, but this operation does not include the child turn result. Count proof only after that fresh turn calls the target model-callable tool; once the target call succeeds, stop validation and report the result.',
     });
   } catch (error) {
     return store.fail(input.operationId, {

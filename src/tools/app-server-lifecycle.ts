@@ -135,8 +135,8 @@ function managedAppServerTarget(input: {
   const url = validatedStateUrl(state);
   const owned = state?.owned === true;
   const workspaceMatches = typeof state?.workspace === 'string' && pathsMatch(state.workspace, input.workspace);
+  const processAlive = pid !== null && input.processes.some((entry) => entry.pid === pid);
   const processTree = pid === null || input.includeProcessTree === false ? [] : collectProcessTree(input.processes, [pid]);
-  const processAlive = pid !== null && processTree.some((entry) => entry.pid === pid);
 
   let canStop = false;
   let stopReason = 'No primary App Server launcher state exists for this workspace.';
@@ -197,6 +197,55 @@ function publicTarget(target: ManagedAppServerTarget, workspace: string, include
   return payload;
 }
 
+function reconcileDeadManagedState(input: {
+  workspace: string;
+  target: ManagedAppServerTarget;
+  store: OperationStore;
+}): Record<string, unknown> | null {
+  const target = input.target;
+  if (
+    !target.stateExists
+    || !target.stateOk
+    || !target.owned
+    || !target.workspaceMatches
+    || target.pid === null
+    || target.url === null
+    || target.processAlive
+  ) {
+    return null;
+  }
+
+  const stateFile = appServerStateFileForWorkspace(input.workspace, 'primary');
+  const stateRead = readAppServerStateFile(stateFile, 'primary');
+  writeAppServerState(stopStateFrom(stateRead.state, input.workspace), input.workspace);
+
+  const completedStopOperationIds: string[] = [];
+  for (const operation of input.store.list()) {
+    if (operation.kind !== 'app_server_stop' || operation.status !== 'running') continue;
+    const existingEvidence = recordFrom(operation.evidence);
+    input.store.complete(operation.id, {
+      evidence: {
+        ...existingEvidence,
+        reconciliation: {
+          reason: 'managed App Server process was already gone during status reconciliation',
+          pid: target.pid,
+          appServerUrl: target.url,
+        },
+      },
+      nextAction: 'Managed App Server was already stopped; launcher state was reconciled to stopped.',
+    });
+    completedStopOperationIds.push(operation.id);
+  }
+
+  return {
+    stateUpdated: true,
+    reason: 'managed App Server process from launcher state was not running',
+    pid: target.pid,
+    appServerUrl: redactSensitiveText(target.url),
+    completedStopOperationIds,
+  };
+}
+
 function requestedStopEvidence(input: {
   workspace: string;
   timeoutMs: number;
@@ -233,6 +282,7 @@ export async function buildAppServerStatusPayload(
     workspace?: string;
     processLister?: ProcessLister;
     readyProbe?: ReadyProbe;
+    store?: OperationStore;
   } = {},
 ): Promise<Record<string, unknown>> {
   const workspace = resolveWorkspaceRoot(deps.workspace);
@@ -241,11 +291,31 @@ export async function buildAppServerStatusPayload(
   const readyTimeoutMs = input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
   const processLister = deps.processLister ?? listProcesses;
   const readyProbe = deps.readyProbe ?? defaultReadyProbe;
-  const target = managedAppServerTarget({
+  const store = deps.store ?? new OperationStore({ workspace });
+  let target = managedAppServerTarget({
     workspace,
     processes: processLister(),
     includeProcessTree,
   });
+  const ready = probeReady && target.url !== null
+    ? {
+        probed: true,
+        ok: await readyProbe(target.url, readyTimeoutMs),
+        timeoutMs: readyTimeoutMs,
+      }
+    : {
+        probed: false,
+        ok: null,
+        timeoutMs: readyTimeoutMs,
+      };
+  const reconciliation = ready.ok === true ? null : reconcileDeadManagedState({ workspace, target, store });
+  if (reconciliation !== null) {
+    target = managedAppServerTarget({
+      workspace,
+      processes: processLister(),
+      includeProcessTree,
+    });
+  }
 
   const payload: Record<string, unknown> = {
     ok: true,
@@ -256,20 +326,8 @@ export async function buildAppServerStatusPayload(
       'It does not inspect or stop user global MCP servers.',
     ],
   };
-
-  if (probeReady && target.url !== null) {
-    payload.ready = {
-      probed: true,
-      ok: await readyProbe(target.url, readyTimeoutMs),
-      timeoutMs: readyTimeoutMs,
-    };
-  } else {
-    payload.ready = {
-      probed: false,
-      ok: null,
-      timeoutMs: readyTimeoutMs,
-    };
-  }
+  if (reconciliation !== null) payload.reconciliation = reconciliation;
+  payload.ready = ready;
 
   return payload;
 }

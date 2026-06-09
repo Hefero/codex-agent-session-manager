@@ -40,6 +40,23 @@ test('buildRemotePlan treats --resume alias as a session resume with default san
   }
 });
 
+test('buildRemotePlan forwards non-secret prompt to launched Codex TUI', async () => {
+  const workspace = tempWorkspace();
+  try {
+    const options = parseRemoteArgs(['--workspace', workspace, '--port', '4506', '--resume', 'thread-a', '--prompt', 'hello managed remote']);
+    const plan = await buildRemotePlan(
+      options,
+      { codexCommandResolver: () => 'codex-test' },
+    );
+
+    assert.equal(plan.tui.promptIncluded, true);
+    assert.deepEqual(plan.tui.args.slice(0, 2), ['resume', 'thread-a']);
+    assert.equal(plan.tui.args.at(-1), 'hello managed remote');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('buildRemotePlan ignores legacy state and uses primary state only', async () => {
   const workspace = tempWorkspace();
   try {
@@ -88,6 +105,27 @@ test('runRemoteCommand dry run redacts workspace and prints traditional commands
     assert.match(text, /"source": "port-argument"/u);
     assert.match(text, /"app-server"/u);
     assert.match(text, /"--remote"/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('runRemoteCommand dry run redacts prompt text', async () => {
+  const workspace = tempWorkspace();
+  const output: string[] = [];
+  try {
+    const exitCode = await runRemoteCommand(
+      ['--workspace', workspace, '--port', '4506', '--dry-run', '--prompt', 'secret prompt text'],
+      {
+        codexCommandResolver: () => 'codex-test',
+        output: (text) => output.push(text),
+      },
+    );
+
+    assert.equal(exitCode, 0);
+    const text = output.join('\n');
+    assert.match(text, /"<prompt>"/u);
+    assert.doesNotMatch(text, /secret prompt text/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

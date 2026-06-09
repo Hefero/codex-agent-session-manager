@@ -137,6 +137,7 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
       assert.match(config, /command = "node"/u);
       assert.match(config, /args = \["node_modules\/codex-agent-session-manager\/dist\/cli\.js", "serve"\]/u);
     }
+    assert.match(config, /cwd = "\."/u);
 
     const gitignore = readFileSync(join(workspace, '.gitignore'), 'utf8');
     assert.match(gitignore, /\.codex-agent-session-manager\//u);
@@ -155,6 +156,8 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.match(shellCodex, /--prompt/u);
     assert.match(shellCodex, /Convert-CodexArgsToManagedRemoteArgs/u);
     assert.match(shellCodex, /Convert-ShellResumeStateToManagedRemoteArgs/u);
+    assert.match(shellCodex, /Should-DelegateToRealCodex/u);
+    assert.match(shellCodex, /Resolve-CodexRealCli/u);
     assert.match(shellCodex, /managed-remote/u);
     assert.match(shellCodex, /--no-bypass-sandbox/u);
     assert.match(shellCodex, /@\('remote'\)/u);
@@ -164,6 +167,8 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     const posixCodex = readFileSync(join(workspace, '.codex-agent-session-manager', 'shell', 'codex.mjs'), 'utf8');
     assert.match(posixCodex, /convertCodexArgsToManagedRemoteArgs/u);
     assert.match(posixCodex, /convertShellResumeStateToManagedRemoteArgs/u);
+    assert.match(posixCodex, /shouldDelegateToRealCodex/u);
+    assert.match(posixCodex, /resolveRealCodexCli/u);
     assert.match(posixCodex, /remote', \.\.\.remoteArgs/u);
     assert.doesNotMatch(posixCodex, /dangerously-bypass-approvals-and-sandbox/u);
 
@@ -319,6 +324,7 @@ test('init creates package metadata when package.json is absent and honors --no-
       assert.match(config, /command = "node"/u);
       assert.match(config, /args = \["node_modules\/codex-agent-session-manager\/dist\/cli\.js", "serve"\]/u);
     }
+    assert.match(config, /cwd = "\."/u);
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       private?: boolean;
       scripts?: Record<string, string>;
@@ -430,6 +436,50 @@ process.exit(0);
       ],
     ]);
     assert.doesNotMatch(JSON.stringify(calls), /--dangerously-bypass-approvals-and-sandbox|--disable|js_repl|"-C"/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('generated PowerShell supervisor delegates native Codex subcommands to the real CLI', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('PowerShell supervisor replay is Windows-only');
+    return;
+  }
+
+  const workspace = tempWorkspace();
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const binDir = join(workspace, 'fake-bin');
+    const logPath = join(workspace, 'real-codex-argv.txt');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, 'codex.cmd'),
+      '@echo off\r\necho %*>>"%REAL_CODEX_LOG%"\r\nexit /b 0\r\n',
+      'utf8',
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
+    const result = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor, 'mcp', 'list'],
+      {
+        cwd: workspace,
+        encoding: 'utf8',
+        windowsHide: true,
+        env: {
+          ...process.env,
+          PATH: `${binDir};${process.env.PATH ?? ''}`,
+          REAL_CODEX_LOG: logPath,
+        },
+      },
+    );
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(readFileSync(logPath, 'utf8').trim(), 'mcp list');
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

@@ -205,6 +205,9 @@ Current checks:
   `init --install-shell-hook` as the explicit opt-in path, including dry-run
   with no profile write and real install against a disposable profile path.
   Validate explicit PowerShell, bash, and zsh selection.
+- keep non-project-local host integration edits out of init. VS Code extension
+  visibility was probed and is not part of the supported scaffold contract for
+  this release.
 - deinitialize project-scoped scaffold with dry-run-by-default semantics,
   `--confirm` for real edits, and `--remove-runtime` before deleting local
   runtime state.
@@ -299,6 +302,13 @@ Expected evidence:
   operations that require an App Server URL, managed launch state, or automatic
   continuation are only expected to work after a managed `remote`/App Server
   path is active or an explicit loopback App Server URL is configured.
+- The proof above is for CLI/terminal-launched Codex. For the Codex VS Code
+  extension, run a separate host probe: open the initialized folder, run `/mcp`
+  in the extension, then compare with `codex.cmd mcp list` from the same
+  folder. On Windows native extension builds, the extension may spawn its
+  internal App Server outside the workspace and miss project-scoped MCP config.
+  Treat that as a host-compatibility limitation rather than release proof
+  failure for the terminal/managed remote path.
 - `codex_session_hard_relaunch` is the explicit exception for process-level
   self-management from plain `codex`. A disposable Windows probe launched
   plain `codex`, had the first agent call the tool, and verified the relaunched
@@ -309,12 +319,12 @@ Expected evidence:
   project, and ask the agent to call `codex_session_hard_relaunch` with
   `handoffMode: "shell-resume-next"`. PowerShell, bash, and zsh hook blocks are
   covered by unit tests; real macOS runtime validation remains host-dependent.
+- With the shell hook installed, also validate that native Codex subcommands
+  still bypass the managed remote wrapper, for example `codex mcp list` and
+  `codex --version`.
 
-Repo-local Codex plugin packaging remains a future distribution option, not
-the release proof path. A probe showed that a bundled-MCP plugin works after
-explicit `codex plugin marketplace add` plus `codex plugin add`, but a repo
-marketplace file alone did not make the MCP callable in a fresh `codex exec`
-session.
+VS Code extension integration remains an abandoned probe, not a supported
+release path. The terminal and managed remote flows are the release proof paths.
 
 ## Callable Catalog Proof Matrix
 

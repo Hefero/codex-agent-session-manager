@@ -359,6 +359,12 @@ Phase 9 adds project bootstrap:
   `node_modules/codex-agent-session-manager/dist/cli.js` entrypoint. This
   avoids depending on a global npm binary when third-party launchers simply run
   `codex` in the project directory.
+- The project-scoped config path is validated for CLI/terminal-launched Codex
+  sessions. A Windows VS Code extension probe showed that the extension can
+  spawn its internal `codex app-server` without the workspace as process cwd;
+  in that host, `/mcp` may miss project-local MCP servers even though
+  `codex.cmd mcp list` from the same folder sees them. Treat IDE-extension
+  visibility as a separate host-compatibility probe.
 - On Windows, the generated MCP config wraps the session-manager stdio server
   with `.codex-agent-session-manager/windows-hidden-stdio-launcher.exe`. For
   project-local installs the launcher runs `node node_modules/.../dist/cli.js
@@ -378,12 +384,12 @@ Phase 9 adds project bootstrap:
   default: it installs or refreshes the marked `codex` function hook for
   PowerShell, bash, or zsh so plain `codex` launches can enter the managed
   remote path. Without that flag, `init` does not edit shell profiles.
-- Repo-local Codex plugin packaging was probed as an alternative native path.
-  A plugin with bundled `.mcp.json` became visible after explicit
-  `codex plugin marketplace add` plus `codex plugin add`, but a repo
-  marketplace file alone was not enough to make the MCP callable in a fresh
-  `codex exec` session. The project-scoped `.codex/config.toml` path is
-  therefore the minimum reliable native integration for this release.
+- A VS Code extension visibility probe showed that alternate host integration
+  can expose an MCP server in `/mcp`, but it still does not solve App Server
+  session control and adds non-project-local state. It is not a supported
+  project feature in this release. The project-scoped `.codex/config.toml` path
+  plus terminal/managed remote sessions remains the minimum supported native
+  integration.
 
 Post-alpha replay hardening adds an opt-in plain-`codex` self-management
 fallback:
@@ -397,6 +403,10 @@ fallback:
 - The local supervisor supports the common Codex-shaped forms
   `codex "<prompt>"` and `codex resume <threadId> "<prompt>"` by translating
   them to managed `remote --prompt` / `remote --resume ... --prompt`.
+- Native Codex subcommands and flags such as `codex mcp list`,
+  `codex login`, `codex --version`, and `codex --help` are delegated to the
+  real Codex CLI instead of being forwarded to `codex-agent-session-manager
+  remote`.
 - `codex_session_hard_relaunch` walks from the session-manager MCP server
   process to the visible Codex TUI ancestor, preferring the terminal wrapper
   that launched Codex and avoiding App Server-looking ancestors.

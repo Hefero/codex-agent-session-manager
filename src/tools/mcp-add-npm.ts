@@ -257,7 +257,8 @@ function mcpServerBlock(input: { serverName: string; packageName: string; entryp
   return `${CONFIG_MARKER_PREFIX}${input.serverName}
 [mcp_servers.${input.serverName}]
 command = "node"
-args = [${args.map((arg) => jsonString(arg)).join(', ')}]${envVarsLine}
+args = [${args.map((arg) => jsonString(arg)).join(', ')}]
+cwd = "."${envVarsLine}
 ${CONFIG_MARKER_END}`;
 }
 

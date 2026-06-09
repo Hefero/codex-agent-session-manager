@@ -40,8 +40,8 @@ codex
 patterns to `.gitignore`, creates or updates `package.json` with
 `codex:init`, `codex:init:dry-run`, remote, and App Server package scripts, and
 creates or updates a small `AGENTS.md` block unless `--no-agents` is passed. It
-does not edit the user's global Codex config. It also does not edit shell
-profiles unless `--install-shell-hook` is explicitly passed.
+does not edit the user's global Codex config or shell profiles unless the
+matching opt-in flag is explicitly passed.
 
 After `init`, a normal Codex session started from the project directory can use
 the session-manager MCP tools; `npm run codex:remote` is optional. Use the
@@ -55,6 +55,17 @@ The MCP config points at the project-local
 package is missing, `init` runs `npm install --save-dev --ignore-scripts
 --no-audit --no-fund --cache ./.npm-cache codex-agent-session-manager@<version>`
 so even an empty workspace becomes self-contained.
+Generated MCP server blocks set `cwd = "."` so hosts can resolve
+project-relative runtime and `node_modules` paths from the initialized
+workspace.
+
+Current VS Code note: the Codex CLI and a terminal-launched `codex` session load
+the project-scoped `.codex/config.toml` from the current directory. The Codex VS
+Code extension may start its own internal App Server outside the workspace on
+Windows native sessions, so `/mcp` inside the extension can miss project-local
+MCP servers even when `codex.cmd mcp list` from the same folder shows them.
+Use terminal-launched Codex or the managed remote flow for supported callable
+catalog validation.
 
 After upgrading this package in an existing project, rerun
 `npx codex-agent-session-manager init` to refresh the managed `AGENTS.md`,
@@ -85,6 +96,9 @@ With the shell hook:
   supervisor under `.codex-agent-session-manager/shell/`;
 - the supervisor starts or reuses the workspace App Server and launches the
   visible Codex TUI through `codex-agent-session-manager remote`;
+- native Codex subcommands and flags such as `codex mcp list`,
+  `codex login`, `codex --version`, and `codex --help` still delegate to the
+  real Codex CLI;
 - simple Codex-shaped commands are preserved:
   - `codex "<prompt>"` becomes managed remote with `--prompt`;
   - `codex resume <thread-id> "<prompt>"` becomes managed remote with
@@ -244,7 +258,7 @@ codex-agent-session-manager stop --confirm
 
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --dry-run
 codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything --confirm
-codex-agent-session-manager mcp add npm tavily-mcp@latest --server-name tavily_search --env-var TAVILY_API_KEY --no-default-stdio-arg --confirm
+codex-agent-session-manager mcp add npm example-search-mcp@latest --server-name search_mcp --env-var SEARCH_API_KEY --no-default-stdio-arg --confirm
 codex-agent-session-manager mcp refresh --thread-id <thread-id>
 
 codex-agent-session-manager operation read --operation-id <operation-id>
@@ -285,7 +299,8 @@ does not edit the user's global Codex config. The install uses
 during install. After a real install, the result reports lifecycle scripts
 declared by the package and warns when they were suppressed. The install does
 not count as callable proof; run `mcp refresh` and validate with a real tool
-call from the continuation.
+call from the continuation. Added npm MCP server blocks also set `cwd = "."`
+for project-relative entrypoints.
 Use repeated `--env-var <NAME>` for secret-bearing MCPs; this writes
 `env_vars = ["NAME"]` and forwards the variable from the launch environment
 without storing the secret value in TOML. Use `--no-default-stdio-arg` for npm

@@ -134,6 +134,7 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
     assert.match(config, /\[mcp_servers\.everything\]/u);
     assert.match(config, /command = "node"/u);
     assert.match(config, /args = \["node_modules\/@modelcontextprotocol\/server-everything\/dist\/index\.js", "stdio"\]/u);
+    assert.match(config, /cwd = "\."/u);
 
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       private?: boolean;
@@ -149,21 +150,21 @@ test('mcp add npm can forward env var names and omit default stdio arg', () => {
   try {
     const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
       {
-        packageSpec: 'tavily-mcp@latest',
-        serverName: 'tavily_search',
+        packageSpec: 'example-search-mcp@latest',
+        serverName: 'search_mcp',
         extraArgs: [],
-        envVars: ['TAVILY_API_KEY', 'TAVILY_API_KEY'],
+        envVars: ['SEARCH_API_KEY', 'SEARCH_API_KEY'],
         dryRun: false,
         confirm: true,
       },
       {
-        npmRunner: fakeInstallPackage('tavily-mcp', 'build/index.js'),
+        npmRunner: fakeInstallPackage('example-search-mcp', 'build/index.js'),
       },
     ));
 
     assert.equal(payload.ok, true);
-    assert.deepEqual(payload.args, ['node_modules/tavily-mcp/build/index.js']);
-    assert.deepEqual(payload.envVars, ['TAVILY_API_KEY']);
+    assert.deepEqual(payload.args, ['node_modules/example-search-mcp/build/index.js']);
+    assert.deepEqual(payload.envVars, ['SEARCH_API_KEY']);
     assert.doesNotMatch(JSON.stringify(payload), /secret/u);
     assert.match(JSON.stringify(payload.warnings), /env_vars stores variable names only/u);
     assert.match(JSON.stringify(payload.warnings), /App Server launch environment/u);
@@ -174,9 +175,10 @@ test('mcp add npm can forward env var names and omit default stdio arg', () => {
     assert.match(String(payload.nextAction), /orphan node\/cmd windows/u);
 
     const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
-    assert.match(config, /\[mcp_servers\.tavily_search\]/u);
-    assert.match(config, /args = \["node_modules\/tavily-mcp\/build\/index\.js"\]/u);
-    assert.match(config, /env_vars = \["TAVILY_API_KEY"\]/u);
+    assert.match(config, /\[mcp_servers\.search_mcp\]/u);
+    assert.match(config, /args = \["node_modules\/example-search-mcp\/build\/index\.js"\]/u);
+    assert.match(config, /cwd = "\."/u);
+    assert.match(config, /env_vars = \["SEARCH_API_KEY"\]/u);
     assert.doesNotMatch(config, /BRAVE|secret|token-value/u);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
@@ -188,7 +190,7 @@ test('mcp add npm rejects invalid env var names', () => {
   try {
     assert.throws(
       () => withCwd(workspace, () => buildMcpAddNpmPayload({
-        packageSpec: 'tavily-mcp',
+        packageSpec: 'example-search-mcp',
         envVars: ['TAVILY-API-KEY'],
       })),
       /Invalid|Environment variable/u,

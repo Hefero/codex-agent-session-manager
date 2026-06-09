@@ -134,11 +134,11 @@ test('parsePublicCommand maps mcp add npm env vars and empty extra args', () => 
       'mcp',
       'add',
       'npm',
-      'tavily-mcp@latest',
+      'example-search-mcp@latest',
       '--server-name',
-      'tavily_search',
+      'search_mcp',
       '--env-var',
-      'TAVILY_API_KEY',
+      'SEARCH_API_KEY',
       '--no-default-stdio-arg',
       '--dry-run',
     ]),
@@ -146,17 +146,17 @@ test('parsePublicCommand maps mcp add npm env vars and empty extra args', () => 
       command: 'mcp',
       subcommand: 'add-npm',
       input: {
-        packageSpec: 'tavily-mcp@latest',
-        serverName: 'tavily_search',
+        packageSpec: 'example-search-mcp@latest',
+        serverName: 'search_mcp',
         extraArgs: [],
-        envVars: ['TAVILY_API_KEY'],
+        envVars: ['SEARCH_API_KEY'],
         dryRun: true,
       },
     },
   );
 
   assert.throws(
-    () => parsePublicCommand(['mcp', 'add', 'npm', 'tavily-mcp', '--arg', 'stdio', '--no-default-stdio-arg']),
+    () => parsePublicCommand(['mcp', 'add', 'npm', 'example-search-mcp', '--arg', 'stdio', '--no-default-stdio-arg']),
     /either --arg or --no-default-stdio-arg/u,
   );
 });
@@ -225,7 +225,7 @@ test('parsePublicCommand rejects ignored public CLI flags and extra positionals'
   );
 
   assert.throws(
-    () => parsePublicCommand(['mcp', 'add', 'npm', 'tavily-mcp', 'extra']),
+    () => parsePublicCommand(['mcp', 'add', 'npm', 'example-search-mcp', 'extra']),
     /Unexpected argument for mcp add npm: extra/u,
   );
 

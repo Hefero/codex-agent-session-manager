@@ -105,6 +105,9 @@ function validateInstalledProject(targetWorkspace: string): void {
   if (!config.includes('[mcp_servers.codex_agent_session_manager]')) {
     throw new Error('Generated .codex/config.toml did not register codex_agent_session_manager.');
   }
+  if (!config.includes('cwd = "."')) {
+    throw new Error('Generated .codex/config.toml did not set MCP cwd to the initialized workspace.');
+  }
   if (process.platform === 'win32') {
     if (
       !config.includes('command = ".codex-agent-session-manager/windows-hidden-stdio-launcher.exe"')

@@ -210,6 +210,7 @@ function mcpConfigBlock(windowsHiddenLauncherPath: string | null, useLocalPackag
 [mcp_servers.${MCP_SERVER_NAME}]
 command = "${PRIMARY_STATE_DIR_NAME}/windows-hidden-stdio-launcher.exe"
 args = ${args}
+cwd = "."
 ${TOML_MARKER_END}`;
   }
 
@@ -218,6 +219,7 @@ ${TOML_MARKER_END}`;
 [mcp_servers.${MCP_SERVER_NAME}]
 command = "node"
 args = ["${LOCAL_PACKAGE_CLI}", "serve"]
+cwd = "."
 ${TOML_MARKER_END}`;
   }
 
@@ -225,6 +227,7 @@ ${TOML_MARKER_END}`;
 [mcp_servers.${MCP_SERVER_NAME}]
 command = "${packageName}"
 args = ["serve"]
+cwd = "."
 ${TOML_MARKER_END}`;
 }
 
@@ -453,9 +456,43 @@ function Resolve-CodexAgentSessionManagerCli {
   throw 'Could not find a codex-agent-session-manager CLI that supports managed shell prompts. Re-run init with the upgraded package or update the project-local devDependency.'
 }
 
-$managerCli = Resolve-CodexAgentSessionManagerCli
+$script:managerCli = $null
 $nextArgs = @($CodexArgs)
 $nextRemoteArgs = $null
+
+function Get-CodexAgentSessionManagerCli {
+  if ($null -eq $script:managerCli) {
+    $script:managerCli = Resolve-CodexAgentSessionManagerCli
+  }
+  return $script:managerCli
+}
+
+function Resolve-CodexRealCli {
+  foreach ($name in @('codex.cmd', 'codex.exe', 'codex')) {
+    $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $command) {
+      return $command.Source
+    }
+  }
+
+  throw 'Could not find the real Codex CLI application on PATH.'
+}
+
+function Should-DelegateToRealCodex {
+  param([object[]] $InputArgs)
+
+  $raw = @($InputArgs | ForEach-Object { [string] $_ })
+  if ($raw.Count -eq 0) {
+    return $false
+  }
+  if ($raw[0] -eq 'resume') {
+    return $false
+  }
+  if ($raw.Count -eq 1 -and -not $raw[0].StartsWith('-')) {
+    return $false
+  }
+  return $true
+}
 
 function Convert-CodexArgsToManagedRemoteArgs {
   param([object[]] $InputArgs)
@@ -540,9 +577,15 @@ while ($true) {
   if ($null -ne $nextRemoteArgs) {
     $remoteArgs = @($nextRemoteArgs)
     $nextRemoteArgs = $null
+  } elseif (Should-DelegateToRealCodex $nextArgs) {
+    $realCodex = Resolve-CodexRealCli
+    & $realCodex @nextArgs
+    $exitCode = if ($null -eq $global:LASTEXITCODE) { 0 } else { $global:LASTEXITCODE }
+    exit $exitCode
   } else {
     $remoteArgs = Convert-CodexArgsToManagedRemoteArgs $nextArgs
   }
+  $managerCli = Get-CodexAgentSessionManagerCli
   $invokeArgs = @($managerCli.PrefixArgs) + @('remote') + @($remoteArgs)
   & $managerCli.Command @invokeArgs
   $exitCode = if ($null -eq $global:LASTEXITCODE) { 0 } else { $global:LASTEXITCODE }
@@ -608,6 +651,13 @@ function promptFromRest(values, startIndex) {
   return values.slice(startIndex).join(' ');
 }
 
+function shouldDelegateToRealCodex(raw) {
+  if (raw.length === 0) return false;
+  if (raw[0] === 'resume') return false;
+  if (raw.length === 1 && !raw[0].startsWith('-')) return false;
+  return true;
+}
+
 function convertCodexArgsToManagedRemoteArgs(raw) {
   const remoteArgs = ['--workspace', workspace];
   if (raw.length === 0) return remoteArgs;
@@ -637,6 +687,10 @@ function convertCodexArgsToManagedRemoteArgs(raw) {
   return [...remoteArgs, ...raw];
 }
 
+function resolveRealCodexCli() {
+  return 'codex';
+}
+
 function convertShellResumeStateToManagedRemoteArgs(state) {
   const mode = typeof state.mode === 'string' && state.mode.length > 0 ? state.mode : 'managed-remote';
   if (mode !== 'managed-remote' && mode !== 'plain') {
@@ -661,14 +715,31 @@ function convertShellResumeStateToManagedRemoteArgs(state) {
   return remoteArgs;
 }
 
-const managerCli = resolveManagerCli();
+let managerCli = null;
+function getManagerCli() {
+  if (managerCli === null) managerCli = resolveManagerCli();
+  return managerCli;
+}
 let nextArgs = process.argv.slice(2);
 let nextRemoteArgs = null;
 
 while (true) {
-  const remoteArgs = nextRemoteArgs ?? convertCodexArgsToManagedRemoteArgs(nextArgs);
-  nextRemoteArgs = null;
-  const result = spawnSync(managerCli.command, [...managerCli.prefixArgs, 'remote', ...remoteArgs], {
+  let remoteArgs;
+  if (nextRemoteArgs !== null) {
+    remoteArgs = nextRemoteArgs;
+    nextRemoteArgs = null;
+  } else if (shouldDelegateToRealCodex(nextArgs)) {
+    const result = spawnSync(resolveRealCodexCli(), nextArgs, {
+      cwd: workspace,
+      stdio: 'inherit',
+      shell: false,
+    });
+    process.exit(typeof result.status === 'number' ? result.status : 1);
+  } else {
+    remoteArgs = convertCodexArgsToManagedRemoteArgs(nextArgs);
+  }
+  const activeManagerCli = getManagerCli();
+  const result = spawnSync(activeManagerCli.command, [...activeManagerCli.prefixArgs, 'remote', ...remoteArgs], {
     cwd: workspace,
     stdio: 'inherit',
     shell: false,
@@ -875,9 +946,8 @@ function formatHumanInitPlan(plan: InitPlan, applied: boolean): string {
     `codex-agent-session-manager init ${plan.dryRun ? 'dry-run' : applied ? 'applied' : 'plan'}`,
     `workspace: <workspace>`,
     `mcp server: ${plan.mcpServerName}`,
-    '',
-    'actions:',
   ];
+  lines.push('', 'actions:');
   for (const action of plan.actions) {
     const kind = action.kind.padEnd(6, ' ');
     lines.push(`  ${kind} ${previewPath(action.target, plan.workspace)} - ${action.reason}`);

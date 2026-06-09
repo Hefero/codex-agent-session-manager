@@ -511,11 +511,11 @@ Implemented:
   ./.npm-cache`.
 - Windows hidden App Server launcher preparation uses the same launcher helper
   as `remote` and remains scoped to local runtime state.
-- Repo-local plugin marketplace integration was probed. A bundled-MCP plugin
-  works after explicit `codex plugin marketplace add` and `codex plugin add`,
-  but a generated repo marketplace alone did not make the MCP callable in a
-  fresh `codex exec` session. Keep plugin packaging as a future distribution
-  option; use `.codex/config.toml` for this release's native project mode.
+- VS Code extension visibility was probed and intentionally not promoted into
+  the scaffold contract. That path can make an MCP visible in the extension,
+  but it adds non-project-local state and does not solve App Server session
+  control. Keep `.codex/config.toml` as the default native project mode for
+  this release.
 
 Validation:
 

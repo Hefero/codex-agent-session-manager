@@ -143,8 +143,8 @@ cannot observe the idle boundary it needs before `turn/start`.
 `codex_session_hard_relaunch` is an experimental escape hatch. Detached mode is
 for plain `codex` sessions: it identifies the current Codex TUI from process
 ancestry, resumes the current thread by default with an optional non-secret
-prompt, then attempts to stop the old TUI process tree. With the opt-in
-PowerShell shell hook installed, `handoffMode: "shell-resume-next"` writes
+prompt, then attempts to stop the old TUI process tree. With the opt-in shell
+hook installed, `handoffMode: "shell-resume-next"` writes
 managed-remote resume state so the shell hook relaunches through
 `codex-agent-session-manager remote` in the same terminal. It does not use App
 Server `turn/start` directly, and its prompt eventually reaches Codex through a
@@ -184,16 +184,19 @@ codex-agent-session-manager session close --thread-id <thread-id> --dry-run
 codex-agent-session-manager session replace --thread-id <thread-id> --dry-run
 ```
 
-The PowerShell shell hook is opt-in. Install it with
+The shell hook is opt-in and supports PowerShell, bash, and zsh. Install it with
 `codex-agent-session-manager shell-hook install --confirm`, or during init with
-`codex-agent-session-manager init --install-shell-hook`. Outside initialized
-workspaces it delegates to the real Codex CLI. Inside initialized workspaces it
-makes `codex` enter the managed `remote` path, so a user or external session
-launcher can type `codex` while the package starts/reuses the workspace App
-Server, records launcher state, and launches the visible TUI with `--remote`.
-Basic Codex-style forms are translated: `codex "<prompt>"` becomes a managed
-fresh remote with `--prompt`, and `codex resume <thread-id> "<prompt>"` becomes
-a managed resume remote.
+`codex-agent-session-manager init --install-shell-hook`. Auto-detection uses
+PowerShell on Windows, zsh on macOS when the shell is unknown, and bash on
+Linux when the shell is unknown; pass `--shell powershell|bash|zsh` or
+`--shell-hook-shell powershell|bash|zsh` to choose explicitly. Outside
+initialized workspaces it delegates to the real Codex CLI. Inside initialized
+workspaces it makes `codex` enter the managed `remote` path, so a user or
+external session launcher can type `codex` while the package starts/reuses the
+workspace App Server, records launcher state, and launches the visible TUI with
+`--remote`. Basic Codex-style forms are translated: `codex "<prompt>"` becomes
+a managed fresh remote with `--prompt`, and
+`codex resume <thread-id> "<prompt>"` becomes a managed resume remote.
 
 CLI output is JSON by default. Operations that modify files, run package
 installs, are destructive, or launch real processes default to dry-run and

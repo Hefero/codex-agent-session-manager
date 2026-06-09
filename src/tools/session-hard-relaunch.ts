@@ -30,7 +30,7 @@ export const sessionHardRelaunchInputSchema = {
   prompt: z.string().max(MAX_PROMPT_CHARS).optional().describe('Optional initial prompt for the relaunched Codex TUI. Do not include secrets; Codex receives this prompt through its CLI argument surface.'),
   resumeMode: z.enum(['current', 'fresh']).optional().describe('Defaults "current". Resumes the current thread when threadId is supplied or can be inferred from process ancestry. Use "fresh" only as an explicit fallback to start a new thread.'),
   threadId: z.string().min(1).optional().describe('Optional thread id to resume. Recommended when the current plain Codex command line does not include a resumable thread id.'),
-  handoffMode: z.enum(['detached', 'shell-resume-next']).optional().describe('Defaults "detached". Use "shell-resume-next" only with the opt-in PowerShell shell hook; it writes resume-next state and closes the current TUI instead of opening a new window.'),
+  handoffMode: z.enum(['detached', 'shell-resume-next']).optional().describe('Defaults "detached". Use "shell-resume-next" only with the opt-in shell hook; it writes resume-next state and closes the current TUI instead of opening a new window.'),
   dryRun: z.boolean().optional().describe('Defaults true. When true, only reports current-process target and launch plan.'),
   confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
   bypassSandbox: z.boolean().optional().describe('When true, passes --dangerously-bypass-approvals-and-sandbox for trusted local workspaces.'),

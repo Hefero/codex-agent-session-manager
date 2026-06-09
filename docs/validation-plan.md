@@ -204,6 +204,7 @@ Current checks:
 - keep shell profile edits out of default init. Validate
   `init --install-shell-hook` as the explicit opt-in path, including dry-run
   with no profile write and real install against a disposable profile path.
+  Validate explicit PowerShell, bash, and zsh selection.
 - deinitialize project-scoped scaffold with dry-run-by-default semantics,
   `--confirm` for real edits, and `--remove-runtime` before deleting local
   runtime state.
@@ -227,12 +228,13 @@ Current checks:
   is non-secret, the relaunched Codex process resumes the current thread by
   default, the new process is started before the old root is stopped, and proof
   comes from the relaunched session's observable work.
-- validate the opt-in PowerShell shell hook separately: install is
-  dry-run-by-default, writes only a marked profile block with `--confirm`,
-  uninstall removes only that block, and initialized workspaces route `codex`
-  through the managed `remote` path rather than plain Codex. Validate both
-  `codex "<prompt>"` -> managed `remote --prompt` and
-  `codex resume <threadId> "<prompt>"` -> managed `remote --resume`.
+- validate the opt-in shell hook separately: install is dry-run-by-default,
+  writes only a marked profile block with `--confirm`, uninstall removes only
+  that block, and initialized workspaces route `codex` through the managed
+  `remote` path rather than plain Codex. Validate PowerShell plus POSIX
+  bash/zsh blocks. Validate both `codex "<prompt>"` -> managed
+  `remote --prompt` and `codex resume <threadId> "<prompt>"` -> managed
+  `remote --resume`.
   `handoffMode: "shell-resume-next"` writes local managed-remote resume-next
   state instead of opening a new terminal directly, and the supervisor converts
   that state into `remote --resume/--prompt` arguments. When
@@ -302,10 +304,11 @@ Expected evidence:
   plain `codex`, had the first agent call the tool, and verified the relaunched
   session created `hard-relaunch-proof.txt` containing exactly
   `hard-relaunch-ok`.
-- Same-terminal relaunch is a separate opt-in PowerShell hook probe. Install
-  the hook, restart/dot-source the profile, run plain `codex` from the
-  initialized project, and ask the agent to call `codex_session_hard_relaunch`
-  with `handoffMode: "shell-resume-next"`.
+- Same-terminal relaunch is a separate opt-in shell-hook probe. Install the
+  hook, restart or source the profile, run plain `codex` from the initialized
+  project, and ask the agent to call `codex_session_hard_relaunch` with
+  `handoffMode: "shell-resume-next"`. PowerShell, bash, and zsh hook blocks are
+  covered by unit tests; real macOS runtime validation remains host-dependent.
 
 Repo-local Codex plugin packaging remains a future distribution option, not
 the release proof path. A probe showed that a bundled-MCP plugin works after

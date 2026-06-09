@@ -35,18 +35,23 @@ function fakeInstaller(workspace: string): { npmInstaller(input: { workspace: st
 }
 
 test('parseInitArgs maps dry-run, workspace, json, agents opt-out, and shell hook opt-in', () => {
-  assert.deepEqual(parseInitArgs(['--workspace', 'project-a', '--dry-run', '--json', '--no-agents', '--install-shell-hook', '--shell-hook-profile', 'profile.ps1']), {
+  assert.deepEqual(parseInitArgs(['--workspace', 'project-a', '--dry-run', '--json', '--no-agents', '--install-shell-hook', '--shell-hook-shell', 'bash', '--shell-hook-profile', 'profile.sh']), {
     workspace: 'project-a',
     dryRun: true,
     json: true,
     agents: false,
     installShellHook: true,
-    shellHookProfile: 'profile.ps1',
+    shellHookShell: 'bash',
+    shellHookProfile: 'profile.sh',
   });
 
   assert.throws(
     () => parseInitArgs(['--shell-hook-profile', 'profile.ps1']),
     /--shell-hook-profile requires --install-shell-hook/u,
+  );
+  assert.throws(
+    () => parseInitArgs(['--shell-hook-shell', 'bash']),
+    /--shell-hook-shell requires --install-shell-hook/u,
   );
 });
 
@@ -99,7 +104,7 @@ test('init shell hook opt-in is dry-run safe and redacts profile target', async 
   const output: string[] = [];
   try {
     const exitCode = await runInitCommand(
-      ['--workspace', workspace, '--dry-run', '--install-shell-hook', '--shell-hook-profile', profile],
+      ['--workspace', workspace, '--dry-run', '--install-shell-hook', '--shell-hook-shell', 'powershell', '--shell-hook-profile', profile],
       { output: (text) => output.push(text) },
     );
 
@@ -156,6 +161,12 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.doesNotMatch(shellCodex, /--dangerously-bypass-approvals-and-sandbox/u);
     assert.doesNotMatch(shellCodex, /Resolve-CodexAgentSessionManagerRealCodex/u);
 
+    const posixCodex = readFileSync(join(workspace, '.codex-agent-session-manager', 'shell', 'codex.mjs'), 'utf8');
+    assert.match(posixCodex, /convertCodexArgsToManagedRemoteArgs/u);
+    assert.match(posixCodex, /convertShellResumeStateToManagedRemoteArgs/u);
+    assert.match(posixCodex, /remote', \.\.\.remoteArgs/u);
+    assert.doesNotMatch(posixCodex, /dangerously-bypass-approvals-and-sandbox/u);
+
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
       devDependencies?: Record<string, string>;
@@ -198,7 +209,7 @@ test('init can install the PowerShell codex shell hook only with explicit opt-in
     const defaultPlan = buildInitPlan({ workspace });
     assert.equal(defaultPlan.shellHookPlan, undefined);
 
-    const plan = buildInitPlan({ workspace, installShellHook: true, shellHookProfile: profile });
+    const plan = buildInitPlan({ workspace, installShellHook: true, shellHookShell: 'powershell', shellHookProfile: profile });
     assert.ok(plan.shellHookPlan);
     assert.ok(plan.actions.some((action) => action.target === '<shell-profile>' && action.reason.includes('PowerShell codex function hook')));
     applyInitPlan(plan, fakeInstaller(workspace));
@@ -206,6 +217,86 @@ test('init can install the PowerShell codex shell hook only with explicit opt-in
     const installed = readFileSync(profile, 'utf8');
     assert.match(installed, /BEGIN codex-agent-session-manager:shell-hook/u);
     assert.match(installed, /function global:codex/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('generated POSIX supervisor consumes shell resume-next state through managed remote', () => {
+  const workspace = tempWorkspace();
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv-posix.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const path = require('node:path');
+const workspace = process.cwd();
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+if (args[0] !== 'remote') {
+  console.error('unexpected args: ' + JSON.stringify(args));
+  process.exit(2);
+}
+const logPath = ${JSON.stringify(logPath)};
+fs.appendFileSync(logPath, JSON.stringify(args) + '\\n');
+const markerPath = path.join(workspace, '.codex-agent-session-manager', 'state', 'posix-state-written.marker');
+if (!fs.existsSync(markerPath)) {
+  const stateDir = path.dirname(markerPath);
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(markerPath, 'written\\n');
+  fs.writeFileSync(path.join(stateDir, 'shell-resume-next.json'), JSON.stringify({
+    mode: 'managed-remote',
+    resumeMode: 'current',
+    threadId: 'thread-posix',
+    prompt: 'posix followup',
+    bypassSandbox: false,
+    enableImageGeneration: true
+  }, null, 2) + '\\n');
+}
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.mjs');
+    const result = spawnSync(process.execPath, [supervisor, 'initial posix prompt'], {
+      cwd: workspace,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const calls = readFileSync(logPath, 'utf8')
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as string[]);
+    for (const call of calls) {
+      const workspaceIndex = call.indexOf('--workspace');
+      assert.notEqual(workspaceIndex, -1);
+      assert.equal(realpathSync.native(call[workspaceIndex + 1] ?? ''), realpathSync.native(workspace));
+      call[workspaceIndex + 1] = '<workspace>';
+    }
+    assert.deepEqual(calls, [
+      ['remote', '--workspace', '<workspace>', '--prompt', 'initial posix prompt'],
+      [
+        'remote',
+        '--workspace',
+        '<workspace>',
+        '--resume',
+        'thread-posix',
+        '--enable-image-generation',
+        '--no-bypass-sandbox',
+        '--prompt',
+        'posix followup',
+      ],
+    ]);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

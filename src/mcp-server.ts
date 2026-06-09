@@ -415,7 +415,7 @@ export function createMcpServer(): McpServer {
     {
       title: 'Hard Relaunch Current Codex TUI',
       description:
-        'Experimental escape hatch: find the current Codex TUI process by this MCP server process ancestry, then resume the current thread by default before stopping the old TUI root. Detached mode starts plain Codex in a new terminal. shell-resume-next mode requires the opt-in PowerShell hook and relaunches through codex-agent-session-manager remote in the same terminal. Does not use App Server turn/start directly.',
+        'Experimental escape hatch: find the current Codex TUI process by this MCP server process ancestry, then resume the current thread by default before stopping the old TUI root. Detached mode starts plain Codex in a new terminal. shell-resume-next mode requires the opt-in shell hook and relaunches through codex-agent-session-manager remote in the same terminal. Does not use App Server turn/start directly.',
       inputSchema: sessionHardRelaunchInputSchema,
       annotations: {
         readOnlyHint: false,

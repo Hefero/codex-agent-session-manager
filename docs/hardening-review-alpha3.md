@@ -645,7 +645,7 @@ Constraints:
   the goal is a hard self-relaunch from plain `codex`, not when a safer
   `turn/start` continuation boundary is available.
 
-### EXP-003: opt-in PowerShell shell hook for same-terminal relaunch
+### EXP-003: opt-in shell hook for same-terminal relaunch
 
 Status: implemented as a probe, not promoted to default behavior.
 
@@ -653,21 +653,25 @@ The hard relaunch probe proved plain-`codex` self-management, but it necessarily
 opened a new terminal because a child process cannot directly enqueue commands
 into its parent shell. The next probe adds an explicit shell integration:
 
-- `init` writes `.codex-agent-session-manager/shell/codex.ps1` inside the
-  target workspace.
+- `init` writes `.codex-agent-session-manager/shell/codex.ps1` and
+  `.codex-agent-session-manager/shell/codex.mjs` inside the target workspace.
 - `codex-agent-session-manager shell-hook install --confirm` adds a marked
-  `function global:codex` block to the user's PowerShell profile.
+  `codex` function block to the selected shell profile. Supported shells are
+  PowerShell, bash, and zsh; pass `--shell powershell|bash|zsh` to choose
+  explicitly.
 - `codex-agent-session-manager init --install-shell-hook` is an equivalent
   explicit opt-in during project initialization; default `init` does not edit
-  shell profiles.
-- Outside initialized workspaces, the function resolves and calls the real
-  `codex.cmd`/`codex.exe`.
+  shell profiles. Pass `--shell-hook-shell powershell|bash|zsh` to choose
+  explicitly from `init`.
+- Outside initialized workspaces, the function delegates to the real `codex`
+  command.
 - Inside initialized workspaces, the function delegates to the project-local
-  supervisor script. That script now calls `codex-agent-session-manager remote`
-  by default instead of plain Codex, so typing `codex` in an initialized
-  workspace starts/reuses the managed App Server and launches the visible TUI
-  with `--remote`.
-- The local supervisor translates basic Codex-shaped entry forms:
+  supervisor script. PowerShell uses `codex.ps1`; bash and zsh use
+  `codex.mjs`. The supervisor now calls `codex-agent-session-manager remote` by
+  default instead of plain Codex, so typing `codex` in an initialized workspace
+  starts/reuses the managed App Server and launches the visible TUI with
+  `--remote`.
+- The local supervisors translate basic Codex-shaped entry forms:
   `codex "<prompt>"` becomes managed `remote --prompt <prompt>`, and
   `codex resume <threadId> "<prompt>"` becomes managed
   `remote --resume <threadId> --prompt <prompt>`.
@@ -699,8 +703,9 @@ Current working-tree validation for this hardening pass:
 - `npm run audit:prod`
 - `npm run pack:validate`
 - `npm test -- test/init.test.ts test/session-hard-relaunch.test.ts`
-  including a Windows PowerShell supervisor replay where `shell-resume-next`
-  state is consumed as managed `remote --resume/--prompt` arguments.
+  including Windows PowerShell and POSIX Node supervisor replays where
+  `shell-resume-next` state is consumed as managed `remote --resume/--prompt`
+  arguments.
 - public CLI parser rejects ignored cross-command flags and extra positionals
   before scheduling guarded operations.
 - Windows detached `session launch` was replayed against a disposable loopback

@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 const MARKER_START = '# BEGIN codex-agent-session-manager:shell-hook';
 const MARKER_END = '# END codex-agent-session-manager:shell-hook';
+type ShellHookShell = 'powershell' | 'bash' | 'zsh';
 
 export interface ParsedShellHookArgs {
   subcommand?: 'install' | 'uninstall' | 'status';
   profile?: string;
+  shell?: ShellHookShell;
   dryRun?: boolean;
   confirm?: boolean;
   help?: boolean;
@@ -17,6 +19,7 @@ export interface ShellHookPlan {
   ok: true;
   subcommand: 'install' | 'uninstall' | 'status';
   dryRun: boolean;
+  shell: ShellHookShell;
   profilePath: string;
   installed: boolean;
   actions: Array<{ kind: 'create' | 'update' | 'remove' | 'noop'; target: string; reason: string }>;
@@ -34,7 +37,8 @@ function usage(): string {
   codex-agent-session-manager shell-hook status [options]
 
 Options:
-  --profile <path>   PowerShell profile to edit. Defaults to Windows PowerShell current-user profile.
+  --shell <name>     Shell hook type: powershell, bash, zsh, or auto. Defaults to auto.
+  --profile <path>   Shell profile to edit. Defaults to the detected shell profile.
   --dry-run          Preview only. This is the default unless --confirm is passed.
   --confirm          Apply install/uninstall changes.
   --help             Show this help.
@@ -45,12 +49,22 @@ export function shellHookUsage(): string {
   return usage();
 }
 
-function defaultProfilePath(): string {
-  return join(homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
+function inferShell(env: NodeJS.ProcessEnv = process.env, platform = process.platform): ShellHookShell {
+  if (platform === 'win32') return 'powershell';
+  const shellName = basename(env.SHELL ?? '').toLowerCase();
+  if (shellName === 'zsh') return 'zsh';
+  if (shellName === 'bash') return 'bash';
+  return platform === 'darwin' ? 'zsh' : 'bash';
 }
 
-function resolveProfilePath(profile: string | undefined): string {
-  const selected = profile ?? defaultProfilePath();
+function defaultProfilePath(shell: ShellHookShell, platform = process.platform): string {
+  if (shell === 'powershell') return join(homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
+  if (shell === 'zsh') return join(homedir(), '.zshrc');
+  return platform === 'darwin' ? join(homedir(), '.bash_profile') : join(homedir(), '.bashrc');
+}
+
+function resolveProfilePath(profile: string | undefined, shell: ShellHookShell): string {
+  const selected = profile ?? defaultProfilePath(shell);
   return isAbsolute(selected) ? resolve(selected) : resolve(process.cwd(), selected);
 }
 
@@ -91,7 +105,7 @@ function appendBlock(content: string | null, block: string): string {
   return ensureTrailingNewline(`${content.trimEnd()}\n\n${block}`);
 }
 
-function hookBlock(): string {
+function powershellHookBlock(): string {
   return `${MARKER_START}
 function global:codex {
   [CmdletBinding(PositionalBinding = $false)]
@@ -128,6 +142,38 @@ function global:codex {
 ${MARKER_END}`;
 }
 
+function posixHookBlock(): string {
+  return `${MARKER_START}
+codex() {
+  local current hook parent
+  current="\${PWD:-$(pwd)}"
+  while [ -n "$current" ]; do
+    hook="$current/.codex-agent-session-manager/shell/codex.mjs"
+    if [ -f "$hook" ]; then
+      node "$hook" "$@"
+      return $?
+    fi
+
+    parent="$(dirname "$current")"
+    if [ -z "$parent" ] || [ "$parent" = "$current" ]; then
+      break
+    fi
+    current="$parent"
+  done
+
+  command codex "$@"
+}
+${MARKER_END}`;
+}
+
+function hookBlock(shell: ShellHookShell): string {
+  return shell === 'powershell' ? powershellHookBlock() : posixHookBlock();
+}
+
+function shellLabel(shell: ShellHookShell): string {
+  return shell === 'powershell' ? 'PowerShell' : shell;
+}
+
 function parseShellHookArgs(argv: readonly string[]): ParsedShellHookArgs {
   const parsed: ParsedShellHookArgs = {};
   const subcommand = argv[0];
@@ -158,6 +204,15 @@ function parseShellHookArgs(argv: readonly string[]): ParsedShellHookArgs {
 
     if (name === '--profile') {
       parsed.profile = readValue();
+    } else if (name === '--shell') {
+      const shell = readValue();
+      if (shell === 'auto') {
+        delete parsed.shell;
+      } else if (shell === 'powershell' || shell === 'bash' || shell === 'zsh') {
+        parsed.shell = shell;
+      } else {
+        throw new Error('--shell must be one of: auto, powershell, bash, zsh.');
+      }
     } else if (name === '--dry-run') {
       parsed.dryRun = true;
     } else if (name === '--confirm') {
@@ -174,7 +229,8 @@ function parseShellHookArgs(argv: readonly string[]): ParsedShellHookArgs {
 
 export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
   const subcommand = parsed.subcommand ?? 'status';
-  const profilePath = resolveProfilePath(parsed.profile);
+  const shell = parsed.shell ?? inferShell();
+  const profilePath = resolveProfilePath(parsed.profile, shell);
   const current = readTextIfExists(profilePath);
   const installed = current !== null && findMarkerLine(current, MARKER_START) >= 0;
   const dryRun = subcommand === 'status' ? true : parsed.confirm !== true;
@@ -184,6 +240,7 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
       ok: true,
       subcommand,
       dryRun,
+      shell,
       profilePath,
       installed,
       actions: [{ kind: 'noop', target: profilePath, reason: installed ? 'shell hook is installed' : 'shell hook is not installed' }],
@@ -191,19 +248,20 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
   }
 
   if (subcommand === 'install') {
-    const block = hookBlock();
+    const block = hookBlock(shell);
     const replaced = current === null ? null : replaceMarkedBlock(current, block);
     const nextContent = replaced ?? appendBlock(current, block);
     return {
       ok: true,
       subcommand,
       dryRun,
+      shell,
       profilePath,
       installed,
       actions: [{
         kind: current === null ? 'create' : installed ? 'update' : 'update',
         target: profilePath,
-        reason: installed ? 'refresh PowerShell codex function hook' : 'install PowerShell codex function hook',
+        reason: installed ? `refresh ${shellLabel(shell)} codex function hook` : `install ${shellLabel(shell)} codex function hook`,
       }],
       nextContent,
     };
@@ -214,12 +272,13 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
     ok: true,
     subcommand,
     dryRun,
+    shell,
     profilePath,
     installed,
     actions: [{
       kind: installed ? 'remove' : 'noop',
       target: profilePath,
-      reason: installed ? 'remove PowerShell codex function hook' : 'shell hook is not installed',
+      reason: installed ? `remove ${shellLabel(shell)} codex function hook` : 'shell hook is not installed',
     }],
     nextContent,
   };
@@ -235,6 +294,7 @@ export function applyShellHookPlan(plan: ShellHookPlan): void {
 function formatPlan(plan: ShellHookPlan): string {
   const lines = [
     `codex-agent-session-manager shell-hook ${plan.subcommand} ${plan.dryRun ? 'dry-run' : 'applied'}`,
+    `shell: ${plan.shell}`,
     `profile: ${plan.profilePath}`,
     `installed: ${plan.installed}`,
     '',
@@ -244,7 +304,7 @@ function formatPlan(plan: ShellHookPlan): string {
     lines.push(`  ${action.kind.padEnd(6, ' ')} ${action.target} - ${action.reason}`);
   }
   if (plan.subcommand === 'install') {
-    lines.push('', 'Restart PowerShell or dot-source the profile before testing the codex function hook.');
+    lines.push('', 'Restart the shell or source the profile before testing the codex function hook.');
   }
   if (plan.dryRun && plan.subcommand !== 'status') {
     lines.push('', 'Dry run only; pass --confirm to apply.');

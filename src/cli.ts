@@ -43,7 +43,7 @@ Commands:
   mcp         Add npm MCP servers, reload MCPs, and start continuation turns.
   operation   Read or wait for durable session-manager operations.
   session     Launch, close, or replace Codex remote TUI sessions.
-  shell-hook  Install an opt-in PowerShell codex function hook.
+  shell-hook  Install an opt-in codex function hook for PowerShell, bash, or zsh.
 
 ${publicCliUsage()}
 ${initUsage()}

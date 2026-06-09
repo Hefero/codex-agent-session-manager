@@ -375,9 +375,9 @@ Phase 9 adds project bootstrap:
 - `AGENTS.md` gets a small managed block by default and can be skipped with
   `--no-agents`.
 - `init --install-shell-hook` is the explicit exception to the project-scoped
-  default: it installs or refreshes the marked PowerShell `codex` function hook
-  so plain `codex` launches can enter the managed remote path. Without that
-  flag, `init` does not edit shell profiles.
+  default: it installs or refreshes the marked `codex` function hook for
+  PowerShell, bash, or zsh so plain `codex` launches can enter the managed
+  remote path. Without that flag, `init` does not edit shell profiles.
 - Repo-local Codex plugin packaging was probed as an alternative native path.
   A plugin with bundled `.mcp.json` became visible after explicit
   `codex plugin marketplace add` plus `codex plugin add`, but a repo
@@ -388,7 +388,7 @@ Phase 9 adds project bootstrap:
 Post-alpha replay hardening adds an opt-in plain-`codex` self-management
 fallback:
 
-- With the PowerShell shell hook installed by `shell-hook install --confirm` or
+- With the shell hook installed by `shell-hook install --confirm` or
   `init --install-shell-hook`, `codex` remains the operator-facing command, but
   initialized workspaces route it through
   `codex-agent-session-manager remote`. This preserves compatibility with

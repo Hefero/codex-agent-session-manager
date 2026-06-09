@@ -503,9 +503,9 @@ Implemented:
   - `codex:app-server:status`
   - `codex:app-server:stop`
 - Small managed `AGENTS.md` block by default, skipped with `--no-agents`.
-- Optional `--install-shell-hook` installs or refreshes the marked PowerShell
-  `codex` function hook as an explicit opt-in; default `init` remains
-  project-scoped and does not edit shell profiles.
+- Optional `--install-shell-hook` installs or refreshes the marked `codex`
+  function hook for PowerShell, bash, or zsh as an explicit opt-in; default
+  `init` remains project-scoped and does not edit shell profiles.
 - If the local package entrypoint is missing, `init` installs the package as a
   project devDependency with `--ignore-scripts --no-audit --no-fund --cache
   ./.npm-cache`.
@@ -636,15 +636,15 @@ Implemented:
   non-secret prompt, then attempts to stop the old TUI root. If the thread id
   cannot be inferred, the tool refuses and requires explicit `threadId` or
   `resumeMode: "fresh"`.
-- An opt-in PowerShell shell-hook probe is implemented but not promoted to the
-  default path. `shell-hook install --confirm` or
-  `init --install-shell-hook` adds a marked `codex` function to the PowerShell
-  profile; initialized workspaces provide a local supervisor script that routes
-  `codex` to `codex-agent-session-manager remote`, preserving the familiar
-  entry command while starting/reusing the managed App Server.
-  The same script consumes `shell-resume-next` state with
-  `mode: "managed-remote"` and relaunches the managed remote flow in the same
-  terminal.
+- An opt-in shell-hook probe is implemented but not promoted to the default
+  path. `shell-hook install --confirm` or `init --install-shell-hook` adds a
+  marked `codex` function to the selected shell profile. PowerShell uses the
+  local `codex.ps1` supervisor; bash and zsh use the local `codex.mjs`
+  supervisor. Initialized workspaces route `codex` to
+  `codex-agent-session-manager remote`, preserving the familiar entry command
+  while starting/reusing the managed App Server. The same supervisors consume
+  `shell-resume-next` state with `mode: "managed-remote"` and relaunch the
+  managed remote flow in the same terminal.
 
 Validation:
 
@@ -655,10 +655,10 @@ Validation:
 - Unit coverage added for hard relaunch target discovery, redacted dry-run
   output, default resume behavior, explicit fresh fallback, background
   scheduling, operation argv parsing, and launch-before-stop ordering.
-- Unit coverage added for shell-hook dry-run/install/status/uninstall, managed
-  remote shell-supervisor generation, and `handoffMode: "shell-resume-next"`
-  managed-remote state writing and consumption into
-  `remote --resume/--prompt` arguments.
+- Unit coverage added for shell-hook dry-run/install/status/uninstall across
+  PowerShell, bash, and zsh; managed remote shell-supervisor generation; and
+  `handoffMode: "shell-resume-next"` managed-remote state writing and
+  consumption into `remote --resume/--prompt` arguments.
 - Real replay findings preserved in `docs/validation-plan.md`: plain `codex`
   can expose project MCP tools, but self-management operations that need an App
   Server URL or continuation require a managed App Server path or explicit

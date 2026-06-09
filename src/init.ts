@@ -15,7 +15,8 @@ const TOML_MARKER_END = '# END codex-agent-session-manager';
 const AGENTS_MARKER_START = '<!-- codex-agent-session-manager:start -->';
 const AGENTS_MARKER_END = '<!-- codex-agent-session-manager:end -->';
 const LOCAL_PACKAGE_CLI = `node_modules/${packageName}/dist/cli.js`;
-const SHELL_CODEX_SCRIPT = `${PRIMARY_STATE_DIR_NAME}/shell/codex.ps1`;
+const SHELL_CODEX_POWERSHELL_SCRIPT = `${PRIMARY_STATE_DIR_NAME}/shell/codex.ps1`;
+const SHELL_CODEX_POSIX_SCRIPT = `${PRIMARY_STATE_DIR_NAME}/shell/codex.mjs`;
 const GITIGNORE_ENTRIES = [
   `${PRIMARY_STATE_DIR_NAME}/`,
   '.npm-cache/',
@@ -37,6 +38,7 @@ interface ParsedInitArgs {
   agents?: boolean;
   json?: boolean;
   installShellHook?: boolean;
+  shellHookShell?: 'powershell' | 'bash' | 'zsh';
   shellHookProfile?: string;
   help?: boolean;
 }
@@ -82,9 +84,11 @@ Options:
   --dry-run            Print the init plan without changing files.
   --json               Print machine-readable JSON output.
   --no-agents          Do not create or update AGENTS.md.
-  --install-shell-hook Install/update the opt-in PowerShell codex function hook.
+  --install-shell-hook Install/update the opt-in codex shell function hook.
+  --shell-hook-shell <name>
+                       Shell hook type: powershell, bash, zsh, or auto.
   --shell-hook-profile <path>
-                       PowerShell profile path for --install-shell-hook.
+                       Shell profile path for --install-shell-hook.
   --help               Show this help.
 `;
 }
@@ -128,6 +132,16 @@ export function parseInitArgs(argv: readonly string[]): ParsedInitArgs {
       case '--install-shell-hook':
         options.installShellHook = true;
         break;
+      case '--shell-hook-shell': {
+        const shell = readValue();
+        if (shell !== 'auto' && shell !== 'powershell' && shell !== 'bash' && shell !== 'zsh') {
+          throw new Error('--shell-hook-shell must be one of: auto, powershell, bash, zsh.');
+        }
+        if (shell !== 'auto') {
+          options.shellHookShell = shell;
+        }
+        break;
+      }
       case '--shell-hook-profile':
         options.shellHookProfile = readValue();
         break;
@@ -142,6 +156,9 @@ export function parseInitArgs(argv: readonly string[]): ParsedInitArgs {
 
   if (options.shellHookProfile !== undefined && options.installShellHook !== true) {
     throw new Error('--shell-hook-profile requires --install-shell-hook.');
+  }
+  if (options.shellHookShell !== undefined && options.installShellHook !== true) {
+    throw new Error('--shell-hook-shell requires --install-shell-hook.');
   }
 
   return options;
@@ -548,6 +565,132 @@ while ($true) {
 `;
 }
 
+function posixCodexScriptContent(): string {
+  return `#!/usr/bin/env node
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+const shellDir = dirname(fileURLToPath(import.meta.url));
+const managerDir = resolve(shellDir, '..');
+const workspace = resolve(managerDir, '..');
+const stateFile = join(managerDir, 'state', 'shell-resume-next.json');
+
+function spawnText(command, args) {
+  const result = spawnSync(command, args, {
+    cwd: workspace,
+    encoding: 'utf8',
+    shell: false,
+  });
+  return result.status === 0 ? String(result.stdout ?? '') : '';
+}
+
+function resolveManagerCli() {
+  const localCli = join(workspace, 'node_modules', '${packageName}', 'dist', 'cli.js');
+  const candidates = [];
+  if (existsSync(localCli)) {
+    candidates.push({ command: 'node', prefixArgs: [localCli] });
+  }
+  candidates.push({ command: '${packageName}', prefixArgs: [] });
+
+  for (const candidate of candidates) {
+    const helpText = spawnText(candidate.command, [...candidate.prefixArgs, 'remote', '--help']);
+    if (helpText.includes('--prompt')) {
+      return candidate;
+    }
+  }
+
+  throw new Error('Could not find a codex-agent-session-manager CLI that supports managed shell prompts. Re-run init with the upgraded package or update the project-local devDependency.');
+}
+
+function promptFromRest(values, startIndex) {
+  return values.slice(startIndex).join(' ');
+}
+
+function convertCodexArgsToManagedRemoteArgs(raw) {
+  const remoteArgs = ['--workspace', workspace];
+  if (raw.length === 0) return remoteArgs;
+
+  if (raw[0] === 'resume') {
+    if (raw.length >= 2 && raw[1] === '--last') {
+      remoteArgs.push('--resume-last');
+      if (raw.length > 2) remoteArgs.push('--prompt', promptFromRest(raw, 2));
+      return remoteArgs;
+    }
+
+    if (raw.length >= 2 && !raw[1].startsWith('-')) {
+      remoteArgs.push('--resume', raw[1]);
+      if (raw.length > 2) remoteArgs.push('--prompt', promptFromRest(raw, 2));
+      return remoteArgs;
+    }
+
+    remoteArgs.push('--pick');
+    return remoteArgs;
+  }
+
+  if (raw.length === 1 && !raw[0].startsWith('-')) {
+    remoteArgs.push('--prompt', raw[0]);
+    return remoteArgs;
+  }
+
+  return [...remoteArgs, ...raw];
+}
+
+function convertShellResumeStateToManagedRemoteArgs(state) {
+  const mode = typeof state.mode === 'string' && state.mode.length > 0 ? state.mode : 'managed-remote';
+  if (mode !== 'managed-remote' && mode !== 'plain') {
+    throw new Error(\`Unsupported codex-agent-session-manager shell resume mode: \${mode}\`);
+  }
+
+  const resumeMode = typeof state.resumeMode === 'string' && state.resumeMode.length > 0 ? state.resumeMode : 'fresh';
+  const remoteArgs = ['--workspace', workspace];
+  if (resumeMode === 'current') {
+    const threadId = typeof state.threadId === 'string' ? state.threadId : '';
+    if (threadId.length === 0) {
+      throw new Error('codex-agent-session-manager shell resume requested current thread without threadId.');
+    }
+    remoteArgs.push('--resume', threadId);
+  } else if (resumeMode !== 'fresh') {
+    throw new Error(\`Unsupported codex-agent-session-manager shell resumeMode: \${resumeMode}\`);
+  }
+
+  if (state.enableImageGeneration === true) remoteArgs.push('--enable-image-generation');
+  if (state.bypassSandbox !== true) remoteArgs.push('--no-bypass-sandbox');
+  if (typeof state.prompt === 'string' && state.prompt.length > 0) remoteArgs.push('--prompt', state.prompt);
+  return remoteArgs;
+}
+
+const managerCli = resolveManagerCli();
+let nextArgs = process.argv.slice(2);
+let nextRemoteArgs = null;
+
+while (true) {
+  const remoteArgs = nextRemoteArgs ?? convertCodexArgsToManagedRemoteArgs(nextArgs);
+  nextRemoteArgs = null;
+  const result = spawnSync(managerCli.command, [...managerCli.prefixArgs, 'remote', ...remoteArgs], {
+    cwd: workspace,
+    stdio: 'inherit',
+    shell: false,
+  });
+  const exitCode = typeof result.status === 'number' ? result.status : 1;
+
+  if (!existsSync(stateFile)) {
+    process.exit(exitCode);
+  }
+
+  const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+  rmSync(stateFile, { force: true });
+  try {
+    nextRemoteArgs = convertShellResumeStateToManagedRemoteArgs(state);
+  } catch (error) {
+    console.warn(error instanceof Error ? error.message : String(error));
+    process.exit(exitCode);
+  }
+}
+`;
+}
+
 function actionForFile(path: string, current: string | null, next: string, reason: string): InitAction {
   if (current === next) return { kind: 'noop', target: path, reason };
   return { kind: current === null ? 'create' : 'update', target: path, reason };
@@ -600,7 +743,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
 
   maybeAddFileUpdate(plan, packageJsonPath, packageCurrent, packageNext, 'add npm scripts and devDependency');
 
-  const shellCodexScriptPath = workspacePath(workspace, ...SHELL_CODEX_SCRIPT.split('/'));
+  const shellCodexScriptPath = workspacePath(workspace, ...SHELL_CODEX_POWERSHELL_SCRIPT.split('/'));
   const shellCodexScriptCurrent = readTextIfExists(shellCodexScriptPath);
   maybeAddFileUpdate(
     plan,
@@ -608,6 +751,16 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     shellCodexScriptCurrent,
     shellCodexScriptContent(),
     'add local PowerShell codex supervisor script',
+  );
+
+  const posixCodexScriptPath = workspacePath(workspace, ...SHELL_CODEX_POSIX_SCRIPT.split('/'));
+  const posixCodexScriptCurrent = readTextIfExists(posixCodexScriptPath);
+  maybeAddFileUpdate(
+    plan,
+    posixCodexScriptPath,
+    posixCodexScriptCurrent,
+    posixCodexScriptContent(),
+    'add local POSIX codex supervisor script',
   );
 
   if (!installedLocalPackageExists(workspace)) {
@@ -647,6 +800,9 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
       subcommand: 'install',
       confirm: !dryRun,
     };
+    if (options.shellHookShell !== undefined) {
+      shellHookInput.shell = options.shellHookShell;
+    }
     if (options.shellHookProfile !== undefined) {
       shellHookInput.profile = options.shellHookProfile;
     }
@@ -656,7 +812,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     plan.actions.push({
       kind: action?.kind === 'noop' ? 'noop' : action?.kind === 'create' ? 'create' : 'update',
       target: '<shell-profile>',
-      reason: action?.reason ?? 'install PowerShell codex function hook',
+      reason: action?.reason ?? 'install codex shell function hook',
     });
   }
 

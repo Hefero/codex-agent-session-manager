@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/codex-agent-session-manager.svg)](https://www.npmjs.com/package/codex-agent-session-manager)
 [![npm alpha](https://img.shields.io/npm/v/codex-agent-session-manager/alpha.svg?label=alpha)](https://www.npmjs.com/package/codex-agent-session-manager)
-[![GitHub release](https://img.shields.io/github/v/release/Apethor/codex-agent-session-manager?include_prereleases)](https://github.com/Apethor/codex-agent-session-manager/releases)
+[![GitHub release](https://img.shields.io/github/v/tag/Apethor/codex-agent-session-manager?filter=v*&sort=semver&label=release)](https://github.com/Apethor/codex-agent-session-manager/releases)
 
 Agent-facing Codex App Server session manager with an MCP validation harness.
 

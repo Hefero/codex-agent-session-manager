@@ -6,10 +6,17 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { connectAppServerClient } from './app-server/client.js';
-import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState } from './app-server/state.js';
+import {
+  appServerRuntimeCompatibility,
+  appServerStateFileForWorkspace,
+  readAppServerStateFile,
+  writeAppServerState,
+  type AppServerRuntimeIdentity,
+} from './app-server/state.js';
 import { redactArgv, redactSensitiveText, redactValue } from './security/redaction.js';
 import { isLoopbackHost, validateAppServerUrl } from './security/url.js';
 import { resolveWorkspaceRoot, workspacePath } from './security/workspace.js';
+import { buildManagedProcessEnv } from './secrets.js';
 import { buildCodexArgs, resolveCodexCommand } from './tools/session-launch.js';
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -60,6 +67,12 @@ export interface RemotePlan {
     promptIncluded: boolean;
   };
   stateFile: string;
+  ignoredState?: {
+    source: string;
+    reason: string;
+    currentRuntime: AppServerRuntimeIdentity;
+    stateRuntime: AppServerRuntimeIdentity | null;
+  };
 }
 
 export interface RemoteDeps {
@@ -332,7 +345,12 @@ async function resolveTargetUrl(
   options: RemoteOptions,
   workspace: string,
   deps: Required<Pick<RemoteDeps, 'freePort'>>,
-): Promise<{ url: string; source: string; startsAppServer: boolean }> {
+): Promise<{
+  url: string;
+  source: string;
+  startsAppServer: boolean;
+  ignoredState?: RemotePlan['ignoredState'];
+}> {
   if (options.url !== undefined) {
     return { url: validateAppServerUrl(options.url, 'App Server URL from --url').href, source: 'argument-url', startsAppServer: false };
   }
@@ -346,6 +364,21 @@ async function resolveTargetUrl(
   const stateRead = readAppServerStateFile(appServerStateFileForWorkspace(workspace, 'primary'), 'primary');
   const stateUrl = stateRead.state?.url;
   if (typeof stateUrl === 'string' && stateUrl.length > 0) {
+    const runtime = appServerRuntimeCompatibility(stateRead.state);
+    if (!runtime.matches) {
+      const port = await deps.freePort(host.replace(/^\[|\]$/gu, ''));
+      return {
+        url: `ws://${host}:${port}`,
+        source: 'port-auto',
+        startsAppServer: true,
+        ignoredState: {
+          source: 'primary-state',
+          reason: runtime.reason ?? 'App Server launcher state runtime does not match the current runtime.',
+          currentRuntime: runtime.current,
+          stateRuntime: runtime.stateRuntime,
+        },
+      };
+    }
     return { url: validateAppServerUrl(stateUrl, 'App Server URL from primary launcher state').href, source: 'primary-state', startsAppServer: false };
   }
 
@@ -502,6 +535,7 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
         : Boolean(options.prompt && options.prompt.length > 0),
     },
     stateFile: appServerStateFileForWorkspace(workspace, 'primary'),
+    ...(target.ignoredState === undefined ? {} : { ignoredState: target.ignoredState }),
   };
 }
 
@@ -518,6 +552,7 @@ export function remotePlanPreview(plan: RemotePlan): Record<string, unknown> {
       noResume: plan.noResume,
       mode: plan.mode,
       stateFile: '<workspace>/.codex-agent-session-manager/state/app-server.json',
+      ...(plan.ignoredState === undefined ? {} : { ignoredState: plan.ignoredState }),
       server: {
         command: redactSensitiveText(plan.server.command),
         args: redactArgv(plan.server.args, { workspace: plan.workspace }),
@@ -542,7 +577,7 @@ function defaultAppServerSpawner(plan: RemotePlan): { pid: number | null } {
     const child = spawn(plan.server.command, plan.server.args, {
       cwd: plan.workspace,
       detached: true,
-      env: { ...process.env, CODEX_APP_SERVER_URL: plan.appServerUrl },
+      env: buildManagedProcessEnv({ workspace: plan.workspace, appServerUrl: plan.appServerUrl }),
       stdio: ['ignore', outFd, errFd],
       windowsHide: true,
       shell: false,
@@ -558,7 +593,7 @@ function defaultAppServerSpawner(plan: RemotePlan): { pid: number | null } {
 function defaultTuiSpawner(plan: RemotePlan): Promise<number> {
   const child = spawn(plan.tui.command, plan.tui.args, {
     cwd: plan.workspace,
-    env: { ...process.env, CODEX_APP_SERVER_URL: plan.appServerUrl },
+    env: buildManagedProcessEnv({ workspace: plan.workspace, appServerUrl: plan.appServerUrl }),
     stdio: 'inherit',
     windowsHide: false,
     shell: false,
@@ -588,6 +623,9 @@ export async function executeRemotePlan(plan: RemotePlan, deps: RemoteDeps = {})
 
   let reusedServer = false;
   let pid: number | null = null;
+  if (plan.ignoredState !== undefined) {
+    output(`Ignoring ${plan.ignoredState.source} App Server state: ${plan.ignoredState.reason}`);
+  }
   if (await readyProbe(plan.appServerUrl)) {
     if (!await codexProbe(plan.appServerUrl)) {
       throw new Error(`Refusing to reuse ${redactSensitiveText(plan.appServerUrl)} because it did not identify as Codex App Server.`);

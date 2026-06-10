@@ -4,26 +4,41 @@
 [![npm alpha](https://img.shields.io/npm/v/codex-agent-session-manager/alpha.svg?label=alpha)](https://www.npmjs.com/package/codex-agent-session-manager)
 [![GitHub release](https://img.shields.io/github/v/tag/Apethor/codex-agent-session-manager?filter=v*&sort=semver&label=release)](https://github.com/Apethor/codex-agent-session-manager/releases)
 
-Agent-facing Codex App Server session manager with an MCP validation harness.
+Agent-facing Codex session and MCP lifecycle manager with callable validation.
 
-The goal is to expose selected Codex App Server session operations as safe MCP
-tools that a Codex agent can call from inside its own workflow.
+The goal is to give a Codex agent a safe control plane for the parts of MCP
+development that otherwise force manual restarts, ad hoc shell commands, or
+visible secret handling. The agent can manage its own Codex App Server session,
+install and remove npm MCP servers, handle env-var credentials without exposing
+secret values in chat, shell history, terminal output, or Codex MCP config, then
+refresh and prove the changed callable catalog from the right model-turn
+boundary.
 
 This project is currently in alpha. It is intended for Codex/App Server
-workflows that need MCP refresh and session-management automation.
+workflows that need session-management automation, MCP lifecycle automation,
+and repeatable proof that MCP tools are actually callable by the agent.
 
-Early scope:
+Current scope:
 
 - discover loaded and persisted Codex threads;
 - identify the intended thread with cwd, status, and marker evidence;
+- start, reuse, stop, reload, continue, close, or replace managed Codex App
+  Server and remote TUI sessions;
+- install and remove npm MCP packages in project-local or user-global scope;
+- inspect npm MCP packages for likely credential env vars before install;
+- store API keys/tokens through hidden prompts and inject them into managed App
+  Server environments by env var name;
+- support safer setup paths for API-key, OAuth, write-capable, or otherwise
+  sensitive MCPs without storing secret values in generated config;
 - reload MCP server processes and continue after an idle boundary;
-- close or replace stale managed remote sessions;
+- clean up stale managed remote sessions without stopping unrelated App Server
+  processes;
 - track operations with status, logs, and next actions;
-- install npm MCP packages into project-scoped Codex config;
 - validate MCP callable-catalog changes from a fresh model turn.
 
-The project is intentionally starting from the session-management architecture,
-not from a generic App Server SDK or a human session browser.
+The project is rooted in session-management architecture, then extends that
+control plane to MCP package lifecycle and credential-safe validation. It is not
+a generic App Server SDK, a human session browser, or a generic secret manager.
 
 ## Install
 
@@ -71,6 +86,7 @@ Agents should call `codex_session_manager_help` for operational guidance. MCP
 clients that support resources can also read `codex-session-manager://guide`,
 `codex-session-manager://workflows`,
 `codex-session-manager://workflows/mcp-handling`,
+`codex-session-manager://secrets`,
 `codex-session-manager://safety`, and
 `codex-session-manager://global-install`.
 
@@ -268,11 +284,14 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_local_mcp_add_npm`
   - `codex_local_mcp_remove`
   - `codex_mcp_cleanup_report`
+  - `codex_mcp_install_npm`
+  - `codex_mcp_package_inspect`
   - `codex_mcp_refresh`
   - `codex_mcp_reload`
   - `codex_mcp_status_list`
   - `codex_operation_read`
   - `codex_operation_wait`
+  - `codex_secret_status`
   - `codex_session_close`
   - `codex_session_continue`
   - `codex_session_hard_relaunch`
@@ -285,6 +304,7 @@ The current MCP surface is still small, but already dogfooded:
 - Guidance resources: `codex-session-manager://guide`,
   `codex-session-manager://workflows`,
   `codex-session-manager://workflows/mcp-handling`,
+  `codex-session-manager://secrets`,
   `codex-session-manager://safety`, and
   `codex-session-manager://global-install`.
 - Durable operation resource: `codex-session-manager://operations`.
@@ -343,6 +363,11 @@ codex-agent-session-manager global install --dry-run
 codex-agent-session-manager global install --confirm
 codex-agent-session-manager global uninstall --dry-run
 
+codex-agent-session-manager secret set TAVILY_API_KEY
+codex-agent-session-manager secret status TAVILY_API_KEY
+codex-agent-session-manager secret list
+codex-agent-session-manager secret unset TAVILY_API_KEY
+
 codex-agent-session-manager app-server start --dry-run --port auto
 codex-agent-session-manager app-server start --dry-run --port auto -- --config 'model="gpt-5"' --enable js_repl
 codex-agent-session-manager app-server status --no-probe-ready
@@ -382,9 +407,11 @@ See [Optional Shell Hook](#optional-shell-hook) before installing the shell
 hook. It is opt-in because it edits a shell profile and changes how the
 `codex` command resolves inside initialized workspaces.
 
-CLI output is JSON by default. Operations that modify files, run package
-installs, are destructive, or launch real processes default to dry-run and
-require `--confirm` for real execution.
+Public App Server/MCP/session CLI output is JSON by default. `init`, `global`,
+`shell-hook`, and `secret` print human-readable action/status output by default
+and accept JSON output where documented. Operations that modify files, run
+package installs, are destructive, or launch real processes default to dry-run
+and require `--confirm` for real execution.
 Continuation and replacement prompts are operator text; prefer `--prompt-file`
 when avoiding prompt text in shell history. Prompt files are resolved inside the
 current workspace and are limited before being read.
@@ -400,6 +427,26 @@ Server.
 Use `codex-agent-session-manager init --json` when automation needs the
 machine-readable form.
 
+`secret set <NAME>` is the supported way to save API keys/tokens for env-var
+MCPs without typing values into chat, shell arguments, TOML config, or
+`package.json`. It prompts with hidden input and confirmation. Use `--stdin`
+only for password-manager or CI integration:
+
+```powershell
+codex-agent-session-manager secret set TAVILY_API_KEY
+codex-agent-session-manager secret status TAVILY_API_KEY
+```
+
+The default secret scope is user-local. `--scope workspace` stores under the
+ignored `.codex-agent-session-manager/secrets/` runtime directory. Alpha
+storage is a restricted local JSON file, not an OS keychain. `remote` and
+managed App Server starts load user and workspace secrets into the child
+process environment; explicit shell env vars still take precedence. If a secret
+is created or changed after the managed App Server is already running, the
+agent should use session-manager refresh, continuation, replacement, or
+lifecycle tools before MCP validation. The operator should not need to restart
+Codex manually.
+
 `mcp local add npm` defaults to dry-run. With `--confirm`, it installs an npm MCP
 package locally and writes only the project-scoped `.codex/config.toml`. It
 does not edit the user's global Codex config. The install uses
@@ -410,11 +457,29 @@ declared by the package and warns when they were suppressed. The install does
 not count as callable proof; run `mcp refresh` and validate with a real tool
 call from the continuation. Added npm MCP server blocks also set `cwd = "."`
 for project-relative entrypoints.
+When installing third-party npm MCPs, prefer `codex_mcp_install_npm` or CLI
+`mcp install npm <package>`. It defaults to project-local scope; pass
+`scope:"global"` / `--scope global` only when the operator explicitly wants a
+user-global MCP. For an inspect-only step, use `mcp inspect npm <package>` or
+`codex_mcp_package_inspect`. Inspection reads npm metadata/README and
+generically extracts likely credential env var names, without package-specific
+hardcoding.
+The MCP server also front-loads this rule in its `instructions` handshake so
+agents see the managed npm MCP install path before falling back to shell,
+`npm`, `codex mcp add`, or manual config edits.
 Use repeated `--env-var <NAME>` for secret-bearing MCPs; this writes
-`env_vars = ["NAME"]` and forwards the variable from the launch environment
-without storing the secret value in TOML. Use `--no-default-stdio-arg` for npm
-MCP packages whose entrypoint defaults to stdio and should not receive a
-positional `"stdio"` argument.
+`env_vars = ["NAME"]` without storing the secret value in TOML. Prefer
+`codex-agent-session-manager secret set <NAME>` first, then install the MCP
+with `--env-var <NAME>`. Add results include `envVarStatus`; when any
+configured env var is missing, do not treat keyless, demo, fallback, or partial
+MCP behavior as proof. If package inspection finds candidate credential env
+vars and `--env-var` is omitted, real install is refused unless
+`--allow-no-env-vars` is explicitly passed after confirming no credential env
+vars are needed. Ask the operator to run `secret set`, then have the agent use
+session-manager refresh, continuation, replacement, or lifecycle tools before
+validation. Use `--no-default-stdio-arg` for npm MCP
+packages whose entrypoint defaults to stdio and should not receive a positional
+`"stdio"` argument.
 
 `mcp local remove <server-name>` removes a project-scoped MCP block that was created
 by `mcp local add npm`. It defaults to dry-run and refuses to touch unmanaged
@@ -437,15 +502,16 @@ the isolated global runtime directory should also be removed.
 
 For OAuth, PII, write-capable, or destructive MCPs, treat the package install
 as only the first step. Prefer read-only scopes first, escalate to write/delete
-scopes only after explicit operator approval, keep OAuth clients and token
-files outside the workspace or under ignored paths such as `.secrets/`, and do
-not patch installed files under `node_modules`. If an environment variable was
-created or changed after the managed App Server started, restart or relaunch
-that App Server before `mcp refresh`; `.codex/config.toml` stores only variable
-names, not values. Do not validate by launching stdio MCP entrypoints in a
-visible terminal; stdio servers stay alive waiting for a client and can leave
-orphan `node`/`cmd` windows. Use App Server refresh plus a real callable tool
-call as proof.
+scopes only after explicit operator approval, use `secret set` for env-var API
+keys/tokens, keep OAuth client files and non-env credential files outside the
+workspace or under ignored paths such as `.secrets/`, and do not patch
+installed files under `node_modules`. If an environment variable was created or
+changed after the managed App Server started, use session-manager refresh,
+continuation, replacement, or lifecycle tools before MCP validation;
+`.codex/config.toml` stores only variable names, not values. Do not validate by
+launching stdio MCP entrypoints in a visible terminal; stdio servers stay alive
+waiting for a client and can leave orphan `node`/`cmd` windows. Use App Server
+refresh plus a real callable tool call as proof.
 
 ## Development
 
@@ -484,6 +550,11 @@ The `remote` command reads and writes only
 `.codex-agent-session-manager/state/app-server.json`; it intentionally ignores
 legacy hot-reloader launcher state so Windows popup tests can compare the new
 flow against the old launcher.
+Launcher state records the runtime that created it, including Windows vs WSL
+path flavor. Automatic reuse refuses incompatible state, so a Windows shell
+will not reuse a WSL App Server, and a WSL shell will not reuse a Windows App
+Server. Passing `--url` or setting `CODEX_APP_SERVER_URL` remains an explicit
+operator override.
 
 In projects initialized with this package, use the generated script name:
 `npm run codex:remote -- --resume <thread-id>`. `--resume <thread-id>` is an

@@ -4,11 +4,23 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { appServerStateFileForWorkspace, writeAppServerState } from '../src/app-server/state.js';
+import {
+  appServerStateFileForWorkspace,
+  currentAppServerRuntimeIdentity,
+  writeAppServerState,
+  type AppServerRuntimeIdentity,
+} from '../src/app-server/state.js';
 import { buildRemotePlan, executeRemotePlan, parseRemoteArgs, runRemoteCommand } from '../src/remote.js';
 
 function tempWorkspace(): string {
   return mkdtempSync(join(tmpdir(), 'codex-agent-session-manager-remote-'));
+}
+
+function incompatibleRuntime(): AppServerRuntimeIdentity {
+  const current = currentAppServerRuntimeIdentity();
+  return current.pathFlavor === 'windows'
+    ? { platform: 'linux', arch: 'x64', isWsl: true, pathFlavor: 'wsl', wslDistroName: 'Ubuntu-24.04' }
+    : { platform: 'win32', arch: 'x64', isWsl: false, pathFlavor: 'windows' };
 }
 
 test('parseRemoteArgs rejects conflicting resume modes', () => {
@@ -156,6 +168,31 @@ test('buildRemotePlan ignores legacy state and uses primary state only', async (
     assert.equal(second.source, 'primary-state');
     assert.equal(second.appServerUrl, 'ws://127.0.0.1:4512');
     assert.equal(second.startsAppServer, false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('buildRemotePlan refuses to reuse App Server state from an incompatible runtime', async () => {
+  const workspace = tempWorkspace();
+  try {
+    writeAppServerState({
+      url: 'ws://127.0.0.1:4512',
+      status: 'ready',
+      owned: true,
+      runtime: incompatibleRuntime(),
+    }, workspace);
+
+    const plan = await buildRemotePlan(
+      { workspace, noResume: true },
+      { codexCommandResolver: () => 'codex-test', freePort: async () => 4513 },
+    );
+
+    assert.equal(plan.source, 'port-auto');
+    assert.equal(plan.appServerUrl, 'ws://127.0.0.1:4513');
+    assert.equal(plan.startsAppServer, true);
+    assert.equal(plan.ignoredState?.source, 'primary-state');
+    assert.match(plan.ignoredState?.reason ?? '', /runtime|paths|created on|identity/iu);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

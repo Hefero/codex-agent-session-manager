@@ -6,6 +6,8 @@ import { userError } from '../errors.js';
 import { runNpm, type NpmRunResult } from '../npm.js';
 import { redactValue } from '../security/redaction.js';
 import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from '../security/workspace.js';
+import { buildEnvVarStatusReport, envVarNextAction, envVarWarnings, type EnvVarStatusReport } from './env-var-status.js';
+import { emptyPackageInspection, type PackageInspectionSummary } from './npm-package-inspect.js';
 import { OperationStore } from './operations.js';
 
 const DEFAULT_TRANSPORT_ARG = 'stdio';
@@ -60,6 +62,10 @@ export const localMcpAddNpmInputSchema = {
     .boolean()
     .optional()
     .describe('Defaults false. When false, npm install uses --ignore-scripts so package lifecycle scripts do not run during install.'),
+  allowNoEnvVars: z
+    .boolean()
+    .optional()
+    .describe('Defaults false. When package inspection finds candidate credential env vars and envVars is empty, real install is refused unless this explicit opt-out is true.'),
   dryRun: z.boolean().optional().describe('Defaults true. Preview the local npm install and project config update without changing files.'),
   confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
 };
@@ -68,6 +74,7 @@ const localMcpAddNpmInputObject = z.object(localMcpAddNpmInputSchema);
 type LocalMcpAddNpmInput = z.infer<typeof localMcpAddNpmInputObject>;
 
 export type NpmRunner = (args: readonly string[], options: { cwd: string }) => NpmRunResult;
+export type PackageInspector = (packageSpec: string) => PackageInspectionSummary;
 
 interface McpAddNpmAction {
   kind: 'create' | 'update' | 'noop' | 'run';
@@ -228,10 +235,27 @@ function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-function warningsFor(input: { envVars: string[]; lifecycleScriptsSuppressed?: boolean }): string[] {
+function warningsFor(input: {
+  envVars: string[];
+  envVarStatus: EnvVarStatusReport;
+  packageInspection: PackageInspectionSummary;
+  allowNoEnvVars: boolean;
+  lifecycleScriptsSuppressed?: boolean;
+}): string[] {
   const warnings: string[] = [];
+  if (!input.packageInspection.ok && input.packageInspection.warning !== undefined) {
+    warnings.push(input.packageInspection.warning);
+    warnings.push('Package inspection did not complete. Inspect package docs before installing or validating, especially for auth or credential requirements.');
+  }
+  if (input.envVars.length === 0 && input.packageInspection.candidateEnvVars.length > 0 && !input.allowNoEnvVars) {
+    warnings.push(`Package inspection found candidate credential env vars: ${input.packageInspection.candidateEnvVars.map((entry) => entry.name).join(', ')}. Install with envVars or explicitly opt out with allowNoEnvVars:true after confirming no credential env vars are needed.`);
+  }
+  if (input.envVars.length === 0 && input.packageInspection.requiresSecretsLikely && input.packageInspection.candidateEnvVars.length === 0) {
+    warnings.push('Package inspection found auth/credential hints but could not extract env var names. Inspect the package docs before installing or validating.');
+  }
   if (input.envVars.length > 0) {
-    warnings.push('env_vars stores variable names only. The named values must exist in the App Server launch environment before MCP refresh; if they were created or changed after App Server start, restart or relaunch the managed App Server first.');
+    warnings.push('env_vars stores variable names only. The named values must exist in the App Server launch environment before MCP refresh; if they were created or changed after App Server start, use session-manager refresh, continuation, replacement, or lifecycle tools yourself. Do not ask the operator to restart Codex manually.');
+    warnings.push(...envVarWarnings(input.envVarStatus));
     warnings.push('For OAuth, PII, write-capable, or destructive MCPs, confirm the requested scopes with the operator, keep keys and tokens outside the workspace or under ignored paths, and do not print sensitive values.');
   }
   if (input.lifecycleScriptsSuppressed === true) {
@@ -240,13 +264,30 @@ function warningsFor(input: { envVars: string[]; lifecycleScriptsSuppressed?: bo
   return warnings;
 }
 
-function nextActionFor(input: { serverName: string; envVars: string[]; dryRun: boolean }): string {
+function nextActionFor(input: {
+  serverName: string;
+  envVars: string[];
+  envVarStatus: EnvVarStatusReport;
+  packageInspection: PackageInspectionSummary;
+  allowNoEnvVars: boolean;
+  dryRun: boolean;
+}): string {
   const installStep = input.dryRun
     ? 'Run with dryRun:false and confirm:true.'
     : '';
-  const envStep = input.envVars.length > 0
-    ? ' Ensure the named env vars are visible to the App Server process; restart or relaunch the managed App Server first if they were just created or changed.'
-    : '';
+  const inspectStep = input.envVars.length === 0 && input.packageInspection.candidateEnvVars.length > 0 && !input.allowNoEnvVars
+    ? ` Package inspection found credential env vars: ${input.packageInspection.candidateEnvVars.map((entry) => entry.name).join(', ')}. Ask the operator to run ${input.packageInspection.candidateEnvVars.map((entry) => `codex-agent-session-manager secret set ${entry.name}`).join('; ')} outside chat, then rerun this install with envVars:[${input.packageInspection.candidateEnvVars.map((entry) => `"${entry.name}"`).join(', ')}].`
+    : input.envVars.length === 0 && !input.packageInspection.ok
+      ? ' Package inspection did not complete. Inspect the package README/repository before installing or validating; if credentials are required, ask the operator to run secret set and install with envVars.'
+      : input.envVars.length === 0 && input.packageInspection.requiresSecretsLikely
+      ? ' Package inspection found auth/credential hints but no env var names. Inspect the package README/repository, ask the operator for required credential names, then install with envVars. Do not validate keyless/fallback behavior as proof.'
+      : '';
+  const statusStep = inspectStep.length > 0 ? inspectStep.trimStart() : envVarNextAction(input.envVarStatus);
+  const envStep = statusStep.length > 0
+    ? ` ${statusStep}`
+    : input.envVars.length > 0
+      ? ' Ensure the named env vars are visible to the App Server process; if they were just created or changed, use session-manager refresh, continuation, replacement, or lifecycle tools yourself before validation. Do not ask the operator to restart Codex manually.'
+      : '';
   return `${installStep}${envStep} Call codex_mcp_refresh with an explicit threadId, then finish the current turn. Final proof is a real call from the continuation to a tool under mcp__${input.serverName}. Once that target tool call succeeds, stop validation and report the result; do not keep probing, do not stop at MCP status alone, and do not prove by launching the stdio entrypoint in a visible terminal because it can leave orphan node/cmd windows.`.trim();
 }
 
@@ -310,6 +351,7 @@ export function buildLocalMcpAddNpmPayload(
   input: LocalMcpAddNpmInput,
   deps: {
     npmRunner?: NpmRunner;
+    packageInspector?: PackageInspector;
     operationStore?: OperationStore;
   } = {},
 ): Record<string, unknown> {
@@ -324,8 +366,18 @@ export function buildLocalMcpAddNpmPayload(
   const dryRun = parsed.dryRun ?? true;
   const confirm = parsed.confirm === true;
   const allowScripts = parsed.allowScripts === true;
+  const allowNoEnvVars = parsed.allowNoEnvVars === true;
   const extraArgs = parsed.extraArgs ?? [DEFAULT_TRANSPORT_ARG];
   const envVars = uniqueSorted(parsed.envVars ?? []);
+  const packageInspection = envVars.length === 0
+    ? (deps.packageInspector ?? emptyPackageInspection)(parsed.packageSpec)
+    : emptyPackageInspection(parsed.packageSpec);
+  const envVarStatus = buildEnvVarStatusReport({
+    names: envVars,
+    workspace,
+    includeWorkspaceStore: true,
+    recommendedScope: 'user',
+  });
   const installArgs = npmInstallArgs({ packageSpec: parsed.packageSpec, allowScripts });
   const actions: McpAddNpmAction[] = [];
   const configPath = workspacePath(workspace, '.codex', 'config.toml');
@@ -359,10 +411,41 @@ export function buildLocalMcpAddNpmPayload(
       packageName,
       serverName,
       envVars,
+      packageInspection,
+      envVarStatus,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
       lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
       actions,
-      warnings: warningsFor({ envVars }),
-      nextAction: nextActionFor({ serverName, envVars, dryRun: true }),
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars }),
+      nextAction: nextActionFor({ serverName, envVars, envVarStatus, packageInspection, allowNoEnvVars, dryRun: true }),
+    };
+  }
+
+  if (envVars.length === 0 && packageInspection.candidateEnvVars.length > 0 && !allowNoEnvVars) {
+    actions.push({
+      kind: 'update',
+      target: previewPath(configPath, workspace),
+      reason: 'register project-scoped Codex MCP server after credential env vars are supplied',
+    });
+    return {
+      ok: false,
+      refused: true,
+      dryRun: false,
+      confirmRequired: false,
+      workspace: '<workspace>',
+      packageSpec: parsed.packageSpec,
+      packageName,
+      serverName,
+      envVars,
+      packageInspection,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
+      lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
+      actions,
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars }),
+      message: 'Package inspection found candidate credential env vars, but envVars was empty. Real install is refused to avoid configuring a secret-bearing MCP in keyless/fallback mode.',
+      nextAction: nextActionFor({ serverName, envVars, envVarStatus, packageInspection, allowNoEnvVars, dryRun: false }),
     };
   }
 
@@ -382,7 +465,11 @@ export function buildLocalMcpAddNpmPayload(
       packageName,
       serverName,
       envVars,
+      packageInspection,
+      envVarStatus,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
       lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
       actions,
       message: 'Pass confirm:true with dryRun:false to install an npm MCP package and update project config.',
     };
@@ -465,7 +552,11 @@ export function buildLocalMcpAddNpmPayload(
       packageName,
       serverName,
       envVars,
+      packageInspection,
+      envVarStatus,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
       lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
       packageLifecycleScripts: packageInfo.lifecycleScripts,
       lifecycleScriptsSuppressed,
       command: 'node',
@@ -476,8 +567,8 @@ export function buildLocalMcpAddNpmPayload(
         stdoutIncluded: npmResult.stdout.length > 0,
         stderrIncluded: npmResult.stderr.length > 0,
       },
-      warnings: warningsFor({ envVars, lifecycleScriptsSuppressed }),
-      nextAction: nextActionFor({ serverName, envVars, dryRun: false }),
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars, lifecycleScriptsSuppressed }),
+      nextAction: nextActionFor({ serverName, envVars, envVarStatus, packageInspection, allowNoEnvVars, dryRun: false }),
     };
     store.complete(operation.id, {
       evidence: {

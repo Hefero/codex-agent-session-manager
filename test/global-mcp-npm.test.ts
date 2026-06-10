@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildGlobalMcpAddNpmPayload, buildGlobalMcpRemovePayload, type GlobalMcpNpmRunner } from '../src/tools/global-mcp-npm.js';
+import { inspectNpmMetadataForMcpPackage } from '../src/tools/npm-package-inspect.js';
 import { OperationStore } from '../src/tools/operations.js';
 
 function tempWorkspace(): string {
@@ -36,6 +37,17 @@ function hiddenLauncher(directory: string, dryRun: boolean): string {
     writeFileSync(launcher, '');
   }
   return launcher;
+}
+
+function fakeSecretBearingInspection(packageSpec: string) {
+  return inspectNpmMetadataForMcpPackage({
+    packageSpec,
+    metadata: {
+      name: packageSpec,
+      version: '1.0.0',
+      readme: 'Set EXAMPLE_GLOBAL_API_KEY before starting this MCP server.',
+    },
+  });
 }
 
 test('global mcp add npm dry-run previews isolated install and user-global config update', () => {
@@ -101,9 +113,57 @@ test('global mcp add npm installs in isolated runtime and writes marked global c
     assert.match(config, /windows-hidden-stdio-launcher\.exe/u);
     assert.match(config, /env_vars = \["EVERYTHING_API_KEY"\]/u);
     assert.doesNotMatch(config, /EVERYTHING_API_KEY=.*secret/u);
+    assert.deepEqual(payload.envVarStatus, {
+      allAvailable: false,
+      missing: ['EVERYTHING_API_KEY'],
+      entries: [{
+        name: 'EVERYTHING_API_KEY',
+        available: false,
+        sources: [],
+        recommendedSetCommand: 'codex-agent-session-manager secret set EVERYTHING_API_KEY',
+      }],
+    });
+    assert.match(JSON.stringify(payload.warnings), /Missing configured env_vars: EVERYTHING_API_KEY/u);
+    assert.match(String(payload.nextAction), /Do not treat keyless or fallback behavior as proof/u);
     const operation = operationStore.read(String(payload.operationId));
     assert.equal(operation?.kind, 'global_mcp_add_npm');
     assert.equal(operation?.status, 'completed');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('global mcp add npm refuses real install when package inspection finds env vars but envVars is empty', () => {
+  const workspace = tempWorkspace();
+  try {
+    const configPath = join(workspace, '.codex', 'config.toml');
+    const stateDir = join(workspace, 'state');
+    let npmCalled = false;
+    const payload = buildGlobalMcpAddNpmPayload(
+      {
+        packageSpec: 'example-global-mcp',
+        serverName: 'example_global',
+        configPath,
+        stateDir,
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        packageInspector: fakeSecretBearingInspection,
+        prepareWindowsHiddenLauncher: hiddenLauncher,
+        npmRunner: () => {
+          npmCalled = true;
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      },
+    );
+
+    assert.equal(payload.ok, false);
+    assert.equal(payload.refused, true);
+    assert.equal(npmCalled, false);
+    assert.deepEqual(payload.suggestedEnvVars, ['EXAMPLE_GLOBAL_API_KEY']);
+    assert.match(String(payload.nextAction), /secret set EXAMPLE_GLOBAL_API_KEY/u);
+    assert.equal(existsSync(configPath), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

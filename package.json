@@ -1,7 +1,7 @@
 {
   "name": "codex-agent-session-manager",
-  "version": "0.1.0-alpha.7",
-  "description": "Agent-facing Codex App Server session manager with an MCP validation harness.",
+  "version": "0.1.0-alpha.8",
+  "description": "Agent-facing Codex session and MCP lifecycle manager with callable validation.",
   "license": "MIT",
   "type": "module",
   "repository": {

@@ -57,7 +57,7 @@ The fix aligns this tool with other guarded operations:
 - real execution requires `dryRun:false` plus `confirm:true`;
 - CLI real execution uses `--confirm`;
 - refusal happens before writing files or running npm;
-- docs and generated AGENTS guidance now show dry-run and confirm flows.
+- docs and agent-facing guidance now show dry-run and confirm flows.
 
 ### H-003: npm package spec parser accepted path-like version suffixes
 
@@ -329,14 +329,14 @@ server after refresh. The replay still exposed agent guidance gaps:
 - the agent briefly tried to modify installed package files under
   `node_modules` before moving to a project-local wrapper;
 - `env_vars` in Codex config forwards names only, so values created after App
-  Server launch require App Server restart/relaunch or a reviewed wrapper that
-  reads the intended user-scoped config;
+  Server launch require the agent to use session-manager refresh, continuation,
+  replacement, or lifecycle tools before MCP validation;
 - the final callable proof path needed to be more directive when a changed MCP
   was visible in App Server status but not callable in the current turn.
 
 The fix updates generated `.gitignore` entries to include common secret files,
-updates generated `AGENTS.md` guidance for OAuth, PII, write-capable, and
-destructive MCPs, and makes `mcp add npm` emit warnings/next actions when
+updates agent-facing guidance for OAuth, PII, write-capable, and destructive
+MCPs, and makes `mcp add npm` emit warnings/next actions when
 `envVars` are configured. The intended default flow is now explicit:
 read-only first, write/delete scopes only after operator approval, no
 `node_modules` patching, no printed sensitive values, and no final success

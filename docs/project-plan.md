@@ -579,6 +579,11 @@ Validation:
   value was not written to config, fresh `codex exec` called
   `tavily_search/tavily_search`, and managed cleanup left the scratch workspace
   empty.
+- Secret handling is now first-class:
+  `codex-agent-session-manager secret set/list/status/unset` stores env-var
+  secrets outside project config, `remote` injects user/workspace secrets into
+  managed App Server processes, and `codex_secret_status` gives agents a
+  value-free availability check.
 - `deinit --remove-added-mcps --remove-empty-npm-project
   --remove-empty-codex-dir` can now remove a scratch npm project whose only
   remaining packages are the session manager and managed npm MCP installs.
@@ -675,6 +680,14 @@ Implemented:
   `docs/error-feedback-hardening-plan.md` for the shared `UserFacingError`
   contract, MCP `ok:false` payload behavior, CLI parser corrections, and
   safe examples for URL/workspace guardrail failures.
+- Secret-bearing third-party npm MCP setup now has a preferred install
+  entrypoint plus a generic package-inspection gate. `codex_mcp_install_npm` /
+  `mcp install npm` defaults to local scope and accepts explicit global scope
+  when requested. `codex_mcp_package_inspect` / `mcp inspect npm` reads npm
+  metadata/README, extracts likely credential env var names without
+  package-specific hardcoding, and install/add tools refuse real install when
+  candidates were found but `envVars` is empty unless `allowNoEnvVars` /
+  `--allow-no-env-vars` is explicitly selected.
 
 Validation:
 

@@ -145,6 +145,7 @@ test('parsePublicCommand maps local mcp add npm', () => {
       '--arg',
       'stdio',
       '--allow-scripts',
+      '--allow-no-env-vars',
       '--dry-run',
     ]),
     {
@@ -155,6 +156,7 @@ test('parsePublicCommand maps local mcp add npm', () => {
         serverName: 'everything',
         extraArgs: ['stdio'],
         allowScripts: true,
+        allowNoEnvVars: true,
         dryRun: true,
       },
     },
@@ -269,6 +271,56 @@ test('parsePublicCommand maps global mcp add and remove', () => {
   assert.throws(
     () => parsePublicCommand(['mcp', 'global', 'remove']),
     /mcp global remove requires a server name/u,
+  );
+});
+
+test('parsePublicCommand maps mcp package inspect', () => {
+  assert.deepEqual(parsePublicCommand(['mcp', 'inspect', 'npm', 'example-search-mcp@latest']), {
+    command: 'mcp',
+    subcommand: 'inspect-npm',
+    input: {
+      packageSpec: 'example-search-mcp@latest',
+    },
+  });
+
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'inspect', 'file', 'example-search-mcp']),
+    /Unknown mcp inspect provider/u,
+  );
+});
+
+test('parsePublicCommand maps preferred mcp install npm wrapper', () => {
+  assert.deepEqual(
+    parsePublicCommand([
+      'mcp',
+      'install',
+      'npm',
+      'example-search-mcp@latest',
+      '--scope',
+      'global',
+      '--server-name',
+      'search_mcp',
+      '--env-var',
+      'SEARCH_API_KEY',
+      '--config',
+      'global-config.toml',
+      '--state-dir',
+      'global-state',
+      '--dry-run',
+    ]),
+    {
+      command: 'mcp',
+      subcommand: 'install-npm',
+      input: {
+        packageSpec: 'example-search-mcp@latest',
+        scope: 'global',
+        serverName: 'search_mcp',
+        envVars: ['SEARCH_API_KEY'],
+        configPath: 'global-config.toml',
+        stateDir: 'global-state',
+        dryRun: true,
+      },
+    },
   );
 });
 

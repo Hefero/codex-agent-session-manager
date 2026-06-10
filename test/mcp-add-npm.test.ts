@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildLocalMcpAddNpmPayload, type NpmRunner } from '../src/tools/mcp-add-npm.js';
+import { inspectNpmMetadataForMcpPackage } from '../src/tools/npm-package-inspect.js';
 import { OperationStore } from '../src/tools/operations.js';
 
 function tempWorkspace(): string {
@@ -37,6 +38,17 @@ function fakeInstallPackage(packageName: string, bin: string, scripts: Record<st
     );
     return { status: 0, stdout: 'installed', stderr: '' };
   };
+}
+
+function fakeSecretBearingInspection(packageSpec: string) {
+  return inspectNpmMetadataForMcpPackage({
+    packageSpec,
+    metadata: {
+      name: packageSpec,
+      version: '1.0.0',
+      readme: 'Set EXAMPLE_SEARCH_API_KEY before starting this MCP server.',
+    },
+  });
 }
 
 test('local mcp add npm dry-run previews package install and config update without writing files', () => {
@@ -172,11 +184,24 @@ test('local mcp add npm can forward env var names and omit default stdio arg', (
     assert.equal(payload.ok, true);
     assert.deepEqual(payload.args, ['node_modules/example-search-mcp/build/index.js']);
     assert.deepEqual(payload.envVars, ['SEARCH_API_KEY']);
-    assert.doesNotMatch(JSON.stringify(payload), /secret/u);
+    assert.deepEqual(payload.envVarStatus, {
+      allAvailable: false,
+      missing: ['SEARCH_API_KEY'],
+      entries: [{
+        name: 'SEARCH_API_KEY',
+        available: false,
+        sources: [],
+        recommendedSetCommand: 'codex-agent-session-manager secret set SEARCH_API_KEY',
+      }],
+    });
     assert.match(JSON.stringify(payload.warnings), /env_vars stores variable names only/u);
+    assert.match(JSON.stringify(payload.warnings), /Missing configured env_vars: SEARCH_API_KEY/u);
+    assert.match(JSON.stringify(payload.warnings), /secret set SEARCH_API_KEY/u);
     assert.match(JSON.stringify(payload.warnings), /App Server launch environment/u);
     assert.match(JSON.stringify(payload.warnings), /OAuth, PII, write-capable, or destructive MCPs/u);
-    assert.match(String(payload.nextAction), /restart or relaunch the managed App Server/u);
+    assert.match(String(payload.nextAction), /Configured env vars are missing: SEARCH_API_KEY/u);
+    assert.match(String(payload.nextAction), /Do not treat keyless or fallback behavior as proof/u);
+    assert.match(String(payload.nextAction), /Do not ask the operator to restart Codex manually/u);
     assert.match(String(payload.nextAction), /do not stop at MCP status alone/u);
     assert.match(String(payload.nextAction), /do not prove by launching the stdio entrypoint/u);
     assert.match(String(payload.nextAction), /orphan node\/cmd windows/u);
@@ -188,6 +213,131 @@ test('local mcp add npm can forward env var names and omit default stdio arg', (
     assert.match(config, /env_vars = \["SEARCH_API_KEY"\]/u);
     assert.doesNotMatch(config, /BRAVE|secret|token-value/u);
   } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('local mcp add npm dry-run suggests env vars discovered by package inspection', () => {
+  const workspace = tempWorkspace();
+  try {
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
+      {
+        packageSpec: 'example-search-mcp',
+        serverName: 'search_mcp',
+      },
+      {
+        packageInspector: fakeSecretBearingInspection,
+      },
+    ));
+
+    assert.equal(payload.ok, true);
+    assert.deepEqual(payload.envVars, []);
+    assert.deepEqual(payload.suggestedEnvVars, ['EXAMPLE_SEARCH_API_KEY']);
+    assert.match(JSON.stringify(payload.warnings), /Package inspection found candidate credential env vars/u);
+    assert.match(String(payload.nextAction), /secret set EXAMPLE_SEARCH_API_KEY/u);
+    assert.match(String(payload.nextAction), /envVars:\["EXAMPLE_SEARCH_API_KEY"\]/u);
+    assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('local mcp add npm refuses real install when package inspection finds env vars but envVars is empty', () => {
+  const workspace = tempWorkspace();
+  try {
+    let npmCalled = false;
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
+      {
+        packageSpec: 'example-search-mcp',
+        serverName: 'search_mcp',
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        packageInspector: fakeSecretBearingInspection,
+        npmRunner: () => {
+          npmCalled = true;
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      },
+    ));
+
+    assert.equal(payload.ok, false);
+    assert.equal(payload.refused, true);
+    assert.equal(npmCalled, false);
+    assert.deepEqual(payload.suggestedEnvVars, ['EXAMPLE_SEARCH_API_KEY']);
+    assert.match(String(payload.message), /credential env vars/u);
+    assert.match(String(payload.nextAction), /rerun this install with envVars/u);
+    assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('local mcp add npm can explicitly opt out of inspected env vars', () => {
+  const workspace = tempWorkspace();
+  try {
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
+      {
+        packageSpec: 'example-search-mcp',
+        serverName: 'search_mcp',
+        allowNoEnvVars: true,
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        packageInspector: fakeSecretBearingInspection,
+        npmRunner: fakeInstallPackage('example-search-mcp', 'build/index.js'),
+      },
+    ));
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.allowNoEnvVars, true);
+    assert.deepEqual(payload.suggestedEnvVars, ['EXAMPLE_SEARCH_API_KEY']);
+    const config = readFileSync(join(workspace, '.codex', 'config.toml'), 'utf8');
+    assert.doesNotMatch(config, /env_vars/u);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('local mcp add npm reports available env var names without exposing values', () => {
+  const workspace = tempWorkspace();
+  const previous = process.env.SEARCH_API_KEY;
+  process.env.SEARCH_API_KEY = 'x';
+  try {
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
+      {
+        packageSpec: 'example-search-mcp',
+        serverName: 'search_mcp',
+        envVars: ['SEARCH_API_KEY'],
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        npmRunner: fakeInstallPackage('example-search-mcp', 'build/index.js'),
+      },
+    ));
+
+    assert.equal(payload.ok, true);
+    assert.deepEqual(payload.envVarStatus, {
+      allAvailable: true,
+      missing: [],
+      entries: [{
+        name: 'SEARCH_API_KEY',
+        available: true,
+        sources: ['environment'],
+        recommendedSetCommand: 'codex-agent-session-manager secret set SEARCH_API_KEY',
+      }],
+    });
+    assert.doesNotMatch(JSON.stringify(payload), /"x"/u);
+    assert.match(JSON.stringify(payload.warnings), /Configured env_vars are available/u);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.SEARCH_API_KEY;
+    } else {
+      process.env.SEARCH_API_KEY = previous;
+    }
     rmSync(workspace, { recursive: true, force: true });
   }
 });

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { readWorkspaceAppServerStates, type AppServerStateRead } from '../app-server/state.js';
+import { appServerRuntimeCompatibility, currentAppServerRuntimeIdentity, readWorkspaceAppServerStates, type AppServerStateRead } from '../app-server/state.js';
 import { pathsMatch } from '../processes.js';
 import { redactSensitiveText, redactValue } from '../security/redaction.js';
 import { validateAppServerUrl } from '../security/url.js';
@@ -54,6 +54,14 @@ function publicStateRead(read: AppServerStateRead, workspace: string): Record<st
     return summary;
   }
 
+  const runtime = appServerRuntimeCompatibility(state);
+  summary.runtimeMatches = runtime.matches;
+  summary.currentRuntime = runtime.current;
+  summary.stateRuntime = runtime.stateRuntime;
+  if (!runtime.matches && runtime.reason !== null) {
+    summary.runtimeMismatchReason = runtime.reason;
+  }
+
   Object.assign(summary, validatePublicUrl(state.url, `App Server URL from ${read.source} launcher state`));
   if (Number.isSafeInteger(state.pid)) summary.pid = state.pid;
   if (typeof state.owned === 'boolean') summary.owned = state.owned;
@@ -86,9 +94,15 @@ function resolvedSummary(env: NodeJS.ProcessEnv, reads: readonly AppServerStateR
     };
   }
 
+  const ignoredReasons: string[] = [];
   for (const read of reads) {
     const url = read.state?.url;
     if (typeof url !== 'string' || url.length === 0) continue;
+    const runtime = appServerRuntimeCompatibility(read.state);
+    if (!runtime.matches) {
+      ignoredReasons.push(`${read.source}: ${runtime.reason ?? 'App Server launcher state runtime does not match the current runtime.'}`);
+      continue;
+    }
     const validated = validatePublicUrl(url, `App Server URL from ${read.source} launcher state`);
     return {
       ok: validated.validUrl === true,
@@ -101,7 +115,9 @@ function resolvedSummary(env: NodeJS.ProcessEnv, reads: readonly AppServerStateR
     ok: false,
     source: null,
     urlConfigured: false,
-    message: 'No App Server URL is configured. Provide appServerUrl, set CODEX_APP_SERVER_URL, or start from workspace launcher state.',
+    message: ignoredReasons.length > 0
+      ? `No compatible App Server URL is configured. Ignored incompatible workspace launcher state: ${ignoredReasons.join(' ')}`
+      : 'No App Server URL is configured. Provide appServerUrl, set CODEX_APP_SERVER_URL, or start from workspace launcher state.',
   };
 }
 
@@ -119,6 +135,7 @@ export function buildAppServerStateReadPayload(
   return {
     ok: true,
     workspacePreview: '<workspace>',
+    currentRuntime: currentAppServerRuntimeIdentity(),
     env: envSummary(env),
     states: reads.map((read) => publicStateRead(read, workspace)),
     resolved: resolvedSummary(env, reads),

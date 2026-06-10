@@ -29,8 +29,11 @@ import { buildGlobalMcpAddNpmPayload, buildGlobalMcpRemovePayload, globalMcpAddN
 import { buildLocalMcpAddNpmPayload, localMcpAddNpmInputSchema } from './tools/mcp-add-npm.js';
 import { buildMcpCleanupReportPayload, mcpCleanupReportInputSchema } from './tools/mcp-report.js';
 import { buildMcpRefreshPayload, mcpRefreshInputSchema } from './tools/mcp-refresh.js';
+import { buildMcpInstallNpmPayload, mcpInstallNpmInputSchema } from './tools/mcp-install-npm.js';
 import { buildLocalMcpRemovePayload, localMcpRemoveInputSchema } from './tools/mcp-remove.js';
+import { buildNpmPackageInspectPayload, inspectNpmPackageForMcp, npmPackageInspectInputSchema } from './tools/npm-package-inspect.js';
 import { buildMcpReloadPayload, mcpReloadInputSchema } from './tools/reload.js';
+import { buildSecretStatusPayload, secretStatusInputSchema } from './tools/secrets.js';
 import { buildSessionClosePayload, sessionCloseInputSchema } from './tools/session-close.js';
 import { buildSessionContinuePayload, sessionContinueInputSchema } from './tools/session-continue.js';
 import { buildSessionHardRelaunchPayload, sessionHardRelaunchInputSchema } from './tools/session-hard-relaunch.js';
@@ -39,7 +42,11 @@ import { buildSessionReplacePayload, sessionReplaceInputSchema } from './tools/s
 import { buildThreadContextPayload, threadContextInputSchema } from './tools/thread-context.js';
 import { packageName, packageVersion } from './version.js';
 
-const instructions = [
+export const serverInstructions = [
+  'If the user asks to install/add/configure an npm MCP, call codex_mcp_install_npm before any shell/npm/codex mcp command.',
+  'Never ask the operator to restart Codex, App Server, or the session manually; use codex_mcp_refresh, codex_session_continue/replace, or lifecycle tools yourself.',
+  'For API-key MCPs, use codex_secret_status and ask only for codex-agent-session-manager secret set <NAME>; then continue/relaunch with tools.',
+  'Raw npm/codex mcp/manual config are fallbacks only if the manager refuses and the operator explicitly chooses that fallback.',
   'Agent-facing Codex App Server session manager.',
   'Call codex_session_manager_help when you need operational guidance; do not rely on project AGENTS.md guidance.',
   'Use tools for selected session operations only; do not treat App Server status alone as callable MCP proof.',
@@ -79,7 +86,7 @@ export function createMcpServer(): McpServer {
       version: packageVersion,
     },
     {
-      instructions,
+      instructions: serverInstructions,
     },
   );
 
@@ -219,11 +226,47 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
+    'codex_mcp_package_inspect',
+    {
+      title: 'Inspect npm MCP Package',
+      description:
+        'Inspect npm package metadata/README before installing a third-party MCP. Extracts likely credential env var names and auth hints generically; does not use package-specific hardcoding and never returns secret values.',
+      inputSchema: npmPackageInspectInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (input) => safeToolCall('codex_mcp_package_inspect', () => buildNpmPackageInspectPayload(input)),
+  );
+
+  server.registerTool(
+    'codex_mcp_install_npm',
+    {
+      title: 'Install npm MCP Server',
+      description:
+        'Preferred entrypoint when the user asks to install an npm MCP. Inspects package metadata/README, detects likely credential env vars, installs local by default or global when requested, stores only env var names, and refuses keyless/fallback installs unless explicitly opted out. Use this instead of raw npm install, raw codex mcp add, or manual config edits.',
+      inputSchema: mcpInstallNpmInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => safeToolCall('codex_mcp_install_npm', () => buildMcpInstallNpmPayload(input, {
+      packageInspector: (packageSpec) => inspectNpmPackageForMcp({ packageSpec }),
+    })),
+  );
+
+  server.registerTool(
     'codex_local_mcp_add_npm',
     {
       title: 'Add Project-Local npm MCP Server',
       description:
-        'Install an npm MCP package into this project, disabling lifecycle scripts by default, and register a project-scoped .codex/config.toml server block. Stores env var names only. After install, use codex_mcp_refresh and prove success with a real call to the new MCP tool.',
+        'Install an npm MCP package into this project, disabling lifecycle scripts by default, and register a project-scoped .codex/config.toml server block. Stores env var names only and returns envVarStatus. If any configured env var is missing, ask the operator to run codex-agent-session-manager secret set <NAME> before validating; keyless/fallback behavior is not proof. After install, use codex_mcp_refresh and prove success with a real call to the new MCP tool.',
       inputSchema: localMcpAddNpmInputSchema,
       annotations: {
         readOnlyHint: false,
@@ -232,7 +275,9 @@ export function createMcpServer(): McpServer {
         openWorldHint: true,
       },
     },
-    async (input) => safeToolCall('codex_local_mcp_add_npm', () => buildLocalMcpAddNpmPayload(input)),
+    async (input) => safeToolCall('codex_local_mcp_add_npm', () => buildLocalMcpAddNpmPayload(input, {
+      packageInspector: (packageSpec) => inspectNpmPackageForMcp({ packageSpec }),
+    })),
   );
 
   server.registerTool(
@@ -257,7 +302,7 @@ export function createMcpServer(): McpServer {
     {
       title: 'Add User-Global npm MCP Server',
       description:
-        'Install an npm MCP package into an isolated user-global runtime and register a marked ~/.codex/config.toml server block. Defaults to dry-run, disables lifecycle scripts by default, stores env var names only, and affects Codex sessions outside the current project until removed.',
+        'Install an npm MCP package into an isolated user-global runtime and register a marked ~/.codex/config.toml server block. Defaults to dry-run, disables lifecycle scripts by default, stores env var names only, returns envVarStatus, and affects Codex sessions outside the current project until removed. If any configured env var is missing, ask the operator to run codex-agent-session-manager secret set <NAME> before validating; keyless/fallback behavior is not proof.',
       inputSchema: globalMcpAddNpmInputSchema,
       annotations: {
         readOnlyHint: false,
@@ -266,7 +311,9 @@ export function createMcpServer(): McpServer {
         openWorldHint: true,
       },
     },
-    async (input) => safeToolCall('codex_global_mcp_add_npm', () => buildGlobalMcpAddNpmPayload(input)),
+    async (input) => safeToolCall('codex_global_mcp_add_npm', () => buildGlobalMcpAddNpmPayload(input, {
+      packageInspector: (packageSpec) => inspectNpmPackageForMcp({ packageSpec }),
+    })),
   );
 
   server.registerTool(
@@ -301,6 +348,23 @@ export function createMcpServer(): McpServer {
       },
     },
     async (input) => safeToolCall('codex_mcp_cleanup_report', () => buildMcpCleanupReportPayload(input)),
+  );
+
+  server.registerTool(
+    'codex_secret_status',
+    {
+      title: 'Check Managed Secret Status',
+      description:
+        'Check whether required env var names are available from the user/workspace secret store or current environment. Never returns secret values. If missing, ask the operator to run codex-agent-session-manager secret set <NAME> outside the chat.',
+      inputSchema: secretStatusInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => safeToolCall('codex_secret_status', () => buildSecretStatusPayload(input)),
   );
 
   server.registerTool(

@@ -7,6 +7,8 @@ import { userError } from '../errors.js';
 import { runNpm, type NpmRunResult } from '../npm.js';
 import { prepareWindowsHiddenLauncherForDirectory } from '../remote.js';
 import { redactValue } from '../security/redaction.js';
+import { buildEnvVarStatusReport, envVarNextAction, envVarWarnings, type EnvVarStatusReport } from './env-var-status.js';
+import { emptyPackageInspection, type PackageInspectionSummary } from './npm-package-inspect.js';
 import { OperationStore } from './operations.js';
 
 const DEFAULT_TRANSPORT_ARG = 'stdio';
@@ -69,6 +71,10 @@ export const globalMcpAddNpmInputSchema = {
     .boolean()
     .optional()
     .describe('Defaults false. When false, npm install uses --ignore-scripts so package lifecycle scripts do not run during install.'),
+  allowNoEnvVars: z
+    .boolean()
+    .optional()
+    .describe('Defaults false. When package inspection finds candidate credential env vars and envVars is empty, real install is refused unless this explicit opt-out is true.'),
   configPath: optionalPathSchema,
   stateDir: optionalPathSchema,
   dryRun: z.boolean().optional().describe('Defaults true. Preview the global npm MCP install and user-global config update without changing files.'),
@@ -93,6 +99,7 @@ type GlobalMcpAddNpmInput = z.infer<typeof globalMcpAddNpmInputObject>;
 type GlobalMcpRemoveInput = z.infer<typeof globalMcpRemoveInputObject>;
 
 export type GlobalMcpNpmRunner = (args: readonly string[], options: { cwd: string }) => NpmRunResult;
+export type GlobalPackageInspector = (packageSpec: string) => PackageInspectionSummary;
 
 type GlobalMcpActionKind = 'create' | 'update' | 'noop' | 'run' | 'delete' | 'skip';
 
@@ -400,11 +407,29 @@ function actionForFile(path: string, current: string | null, next: string | null
   return { kind: current === null ? 'create' : 'update', target: previewPath(path, paths), reason };
 }
 
-function warningsFor(input: { envVars: string[]; lifecycleScriptsSuppressed?: boolean; global: boolean }): string[] {
+function warningsFor(input: {
+  envVars: string[];
+  envVarStatus: EnvVarStatusReport;
+  packageInspection: PackageInspectionSummary;
+  allowNoEnvVars: boolean;
+  lifecycleScriptsSuppressed?: boolean;
+  global: boolean;
+}): string[] {
   const warnings: string[] = [];
   warnings.push('This edits user-global Codex MCP config. It affects Codex sessions outside the current project until removed.');
+  if (!input.packageInspection.ok && input.packageInspection.warning !== undefined) {
+    warnings.push(input.packageInspection.warning);
+    warnings.push('Package inspection did not complete. Inspect package docs before installing or validating, especially for auth or credential requirements.');
+  }
+  if (input.envVars.length === 0 && input.packageInspection.candidateEnvVars.length > 0 && !input.allowNoEnvVars) {
+    warnings.push(`Package inspection found candidate credential env vars: ${input.packageInspection.candidateEnvVars.map((entry) => entry.name).join(', ')}. Install with envVars or explicitly opt out with allowNoEnvVars:true after confirming no credential env vars are needed.`);
+  }
+  if (input.envVars.length === 0 && input.packageInspection.requiresSecretsLikely && input.packageInspection.candidateEnvVars.length === 0) {
+    warnings.push('Package inspection found auth/credential hints but could not extract env var names. Inspect the package docs before installing or validating.');
+  }
   if (input.envVars.length > 0) {
-    warnings.push('env_vars stores variable names only. The named values must exist in the App Server launch environment before MCP refresh; if they were created or changed after App Server start, restart or relaunch the managed App Server first.');
+    warnings.push('env_vars stores variable names only. The named values must exist in the App Server launch environment before MCP refresh; if they were created or changed after App Server start, use session-manager refresh, continuation, replacement, or lifecycle tools yourself. Do not ask the operator to restart Codex manually.');
+    warnings.push(...envVarWarnings(input.envVarStatus));
     warnings.push('For OAuth, PII, write-capable, or destructive MCPs, confirm the requested scopes with the operator, keep keys and tokens outside project workspaces or under ignored paths, and do not print sensitive values.');
   }
   if (input.lifecycleScriptsSuppressed === true) {
@@ -417,12 +442,29 @@ function missingGlobalServerNextAction(serverName: string): string {
   return `No managed user-global MCP block was found for serverName "${serverName}". Call codex_mcp_cleanup_report, inspect global.managedServers[].serverName, then retry with the exact managed serverName. If the block is unmanaged, remove it manually from ~/.codex/config.toml or choose the matching local/global remove tool.`;
 }
 
-function nextActionFor(input: { serverName: string; envVars: string[]; dryRun: boolean }): string {
+function nextActionFor(input: {
+  serverName: string;
+  envVars: string[];
+  envVarStatus: EnvVarStatusReport;
+  packageInspection: PackageInspectionSummary;
+  allowNoEnvVars: boolean;
+  dryRun: boolean;
+}): string {
   const installStep = input.dryRun ? 'Run with dryRun:false and confirm:true.' : '';
-  const envStep = input.envVars.length > 0
-    ? ' Ensure the named env vars are visible to the App Server process; restart or relaunch the managed App Server first if they were just created or changed.'
-    : '';
-  return `${installStep}${envStep} Reload/restart any active Codex App Server that should see this global MCP, then use codex_mcp_refresh with an explicit threadId and prove with a real callable tool under mcp__${input.serverName}.`.trim();
+  const inspectStep = input.envVars.length === 0 && input.packageInspection.candidateEnvVars.length > 0 && !input.allowNoEnvVars
+    ? `Package inspection found credential env vars: ${input.packageInspection.candidateEnvVars.map((entry) => entry.name).join(', ')}. Ask the operator to run ${input.packageInspection.candidateEnvVars.map((entry) => `codex-agent-session-manager secret set ${entry.name}`).join('; ')} outside chat, then rerun this install with envVars:[${input.packageInspection.candidateEnvVars.map((entry) => `"${entry.name}"`).join(', ')}].`
+    : input.envVars.length === 0 && !input.packageInspection.ok
+      ? 'Package inspection did not complete. Inspect the package README/repository before installing or validating; if credentials are required, ask the operator to run secret set and install with envVars.'
+      : input.envVars.length === 0 && input.packageInspection.requiresSecretsLikely
+      ? 'Package inspection found auth/credential hints but no env var names. Inspect the package README/repository, ask the operator for required credential names, then install with envVars. Do not validate keyless/fallback behavior as proof.'
+      : '';
+  const statusStep = inspectStep.length > 0 ? inspectStep : envVarNextAction(input.envVarStatus);
+  const envStep = statusStep.length > 0
+    ? ` ${statusStep}`
+    : input.envVars.length > 0
+      ? ' Ensure the named env vars are visible to the App Server process; if they were just created or changed, use session-manager refresh, continuation, replacement, or lifecycle tools yourself before validation. Do not ask the operator to restart Codex manually.'
+      : '';
+  return `${installStep}${envStep} Use session-manager refresh, continuation, replacement, or lifecycle tools for any active Codex App Server that should see this global MCP; do not ask the operator to restart Codex manually. Then use codex_mcp_refresh with an explicit threadId and prove with a real callable tool under mcp__${input.serverName}.`.trim();
 }
 
 function mcpServerBlock(input: {
@@ -467,6 +509,7 @@ export function buildGlobalMcpAddNpmPayload(
   input: GlobalMcpAddNpmInput,
   deps: {
     npmRunner?: GlobalMcpNpmRunner;
+    packageInspector?: GlobalPackageInspector;
     prepareWindowsHiddenLauncher?: (directory: string, dryRun: boolean) => string | null;
     operationStore?: OperationStore;
   } = {},
@@ -485,8 +528,17 @@ export function buildGlobalMcpAddNpmPayload(
   const dryRun = parsed.dryRun ?? true;
   const confirm = parsed.confirm === true;
   const allowScripts = parsed.allowScripts === true;
+  const allowNoEnvVars = parsed.allowNoEnvVars === true;
   const extraArgs = parsed.extraArgs ?? [DEFAULT_TRANSPORT_ARG];
   const envVars = uniqueSorted(parsed.envVars ?? []);
+  const packageInspection = envVars.length === 0
+    ? (deps.packageInspector ?? emptyPackageInspection)(parsed.packageSpec)
+    : emptyPackageInspection(parsed.packageSpec);
+  const envVarStatus = buildEnvVarStatusReport({
+    names: envVars,
+    includeWorkspaceStore: false,
+    recommendedScope: 'user',
+  });
   const installArgs = npmInstallArgs({ packageSpec: parsed.packageSpec, allowScripts, cacheDir });
   const configCurrent = readTextIfExists(configPath);
   assertNoUnmanagedServerConflict(configCurrent, serverName);
@@ -533,10 +585,44 @@ export function buildGlobalMcpAddNpmPayload(
       serverName,
       serverDir: previewPath(serverDir, paths),
       envVars,
+      packageInspection,
+      envVarStatus,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
       lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
       actions,
-      warnings: warningsFor({ envVars, global: true }),
-      nextAction: nextActionFor({ serverName, envVars, dryRun: true }),
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars, global: true }),
+      nextAction: nextActionFor({ serverName, envVars, envVarStatus, packageInspection, allowNoEnvVars, dryRun: true }),
+    };
+  }
+
+  if (envVars.length === 0 && packageInspection.candidateEnvVars.length > 0 && !allowNoEnvVars) {
+    actions.push({
+      kind: configCurrent === null ? 'create' : 'update',
+      target: previewPath(configPath, paths),
+      reason: 'register user-global Codex MCP server after credential env vars are supplied',
+    });
+    return {
+      ok: false,
+      refused: true,
+      scope: 'global',
+      dryRun: false,
+      confirmRequired: false,
+      configPath: '<user-codex-config>',
+      stateDir: '<global-state>',
+      packageSpec: parsed.packageSpec,
+      packageName,
+      serverName,
+      serverDir: previewPath(serverDir, paths),
+      envVars,
+      packageInspection,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
+      lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
+      actions,
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars, global: true }),
+      message: 'Package inspection found candidate credential env vars, but envVars was empty. Real install is refused to avoid configuring a secret-bearing MCP in keyless/fallback mode.',
+      nextAction: nextActionFor({ serverName, envVars, envVarStatus, packageInspection, allowNoEnvVars, dryRun: false }),
     };
   }
 
@@ -559,9 +645,13 @@ export function buildGlobalMcpAddNpmPayload(
       serverName,
       serverDir: previewPath(serverDir, paths),
       envVars,
+      packageInspection,
+      envVarStatus,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
       lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
       actions,
-      warnings: warningsFor({ envVars, global: true }),
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars, global: true }),
       message: 'Pass confirm:true with dryRun:false to install an npm MCP package and update user-global Codex config.',
     };
   }
@@ -643,7 +733,11 @@ export function buildGlobalMcpAddNpmPayload(
       serverName,
       serverDir: previewPath(serverDir, paths),
       envVars,
+      packageInspection,
+      envVarStatus,
+      suggestedEnvVars: packageInspection.candidateEnvVars.map((entry) => entry.name),
       lifecycleScriptsAllowed: allowScripts,
+      allowNoEnvVars,
       packageLifecycleScripts: packageInfo.lifecycleScripts,
       lifecycleScriptsSuppressed,
       command: preparedLauncherPath === null ? 'node' : previewPath(preparedLauncherPath, paths),
@@ -656,8 +750,8 @@ export function buildGlobalMcpAddNpmPayload(
         stdoutIncluded: npmResult.stdout.length > 0,
         stderrIncluded: npmResult.stderr.length > 0,
       },
-      warnings: warningsFor({ envVars, lifecycleScriptsSuppressed, global: true }),
-      nextAction: nextActionFor({ serverName, envVars, dryRun: false }),
+      warnings: warningsFor({ envVars, envVarStatus, packageInspection, allowNoEnvVars, lifecycleScriptsSuppressed, global: true }),
+      nextAction: nextActionFor({ serverName, envVars, envVarStatus, packageInspection, allowNoEnvVars, dryRun: false }),
     };
     store.complete(operation.id, {
       evidence: {
@@ -748,7 +842,7 @@ export function buildGlobalMcpRemovePayload(
       warnings,
       nextAction: targetBlock === null
         ? missingGlobalServerNextAction(parsed.serverName)
-        : 'Run with dryRun:false and confirm:true to remove the managed global MCP config block. Then reload/restart affected Codex App Servers and validate the callable catalog.',
+        : 'Run with dryRun:false and confirm:true to remove the managed global MCP config block. Then use session-manager refresh, continuation, replacement, or lifecycle tools for affected Codex App Servers and validate the callable catalog; do not ask the operator to restart Codex manually.',
     };
   }
 
@@ -802,7 +896,7 @@ export function buildGlobalMcpRemovePayload(
 
     const nextAction = targetBlock === null
       ? missingGlobalServerNextAction(parsed.serverName)
-      : 'Reload/restart affected Codex App Servers and validate that the removed global MCP namespace is absent from the callable catalog.';
+      : 'Use session-manager refresh, continuation, replacement, or lifecycle tools for affected Codex App Servers and validate that the removed global MCP namespace is absent from the callable catalog; do not ask the operator to restart Codex manually.';
     const payload = {
       ok: true,
       scope: 'global',

@@ -6,18 +6,19 @@ Date: 2026-06-07
 ## Thesis
 
 `codex-agent-session-manager` is an agent-facing wrapper around selected Codex
-App Server operations.
+App Server and MCP lifecycle operations.
 
 Most App Server wrappers are human-facing clients, external task gateways, or
 language SDKs. This project is different:
 
 ```text
-Codex agent -> MCP tool -> Codex App Server -> Codex thread/session runtime
+Codex agent -> MCP tool -> session manager -> Codex App Server / MCP config
 ```
 
 The agent should not need to write one-off JSON-RPC scripts every time it needs
 to find a thread, reload MCP servers, schedule a continuation, close stale
-remote sessions, or prove that a new MCP callable tool is really available.
+remote sessions, install or remove third-party MCPs, handle credential env vars,
+or prove that a new MCP callable tool is really available.
 
 ## Layers
 
@@ -87,6 +88,11 @@ Current bootstrap compatibility:
   and accepts `.codex-mcp-hot-reloader/state/app-server.json` only as a
   temporary compatibility path while the old repo still controls early
   dogfood sessions.
+- Workspace launcher state stores the creating runtime identity. Automatic
+  state reuse refuses legacy state without runtime identity and refuses
+  incompatible runtime/path flavors, such as Windows native shells trying to
+  reuse a WSL App Server URL. Explicit `appServerUrl`/`--url` and
+  `CODEX_APP_SERVER_URL` remain operator overrides.
 - Tool inputs that accept a `cwd` resolve it under the current workspace and
   reject lexical escapes, symlink escapes, and junction escapes. This keeps
   thread discovery scoped to the workspace that loaded the MCP server.
@@ -104,11 +110,14 @@ The current MCP surface exposes:
 - `codex_local_mcp_add_npm`
 - `codex_local_mcp_remove`
 - `codex_mcp_cleanup_report`
+- `codex_mcp_install_npm`
+- `codex_mcp_package_inspect`
 - `codex_mcp_refresh`
 - `codex_mcp_reload`
 - `codex_mcp_status_list`
 - `codex_operation_read`
 - `codex_operation_wait`
+- `codex_secret_status`
 - `codex_session_close`
 - `codex_session_continue`
 - `codex_session_hard_relaunch`
@@ -121,6 +130,7 @@ The current MCP surface exposes:
 - `codex-session-manager://guide`
 - `codex-session-manager://workflows`
 - `codex-session-manager://workflows/mcp-handling`
+- `codex-session-manager://secrets`
 - `codex-session-manager://safety`
 - `codex-session-manager://global-install`
 - `codex-session-manager://operations`
@@ -219,6 +229,25 @@ Phase 10 package bootstrap adds agent-facing npm MCP handlers:
 - Global third-party MCP handling is intentionally separate from
   `global install`, which manages only this package's own global MCP block and
   shell hook.
+- Secret handling is intentionally separate from MCP config. `secret set`
+  stores values in user-local or workspace-local restricted runtime JSON, MCP
+  config stores only `env_vars` names, `remote` injects stored values into the
+  managed App Server environment, and `codex_secret_status` exposes only
+  availability/source metadata to agents.
+- Third-party npm MCP installs have a high-level install entrypoint plus an
+  inspection gate. `codex_mcp_install_npm` / CLI `mcp install npm` defaults to
+  project-local scope and uses `scope:"global"` / `--scope global` only when
+  the operator explicitly wants a user-global MCP. `codex_mcp_package_inspect`
+  and CLI `mcp inspect npm` read npm metadata/README and generically extract
+  likely credential env var names. Install/add tools reuse that evidence when
+  `envVars` is empty and refuse real install if candidates were found, unless
+  the operator explicitly opts out with `allowNoEnvVars` /
+  `--allow-no-env-vars`. This prevents agents from validating keyless or
+  fallback behavior as if a secret-bearing MCP were configured.
+- The MCP server `instructions` field starts with the npm MCP install workflow.
+  Codex reads server instructions during MCP initialization, so the first
+  instructions must make `codex_mcp_install_npm` the visible path before shell,
+  raw `npm`, raw `codex mcp add`, or manual config edits.
 
 Phase 10 also adds project teardown:
 

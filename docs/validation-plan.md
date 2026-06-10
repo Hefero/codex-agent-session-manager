@@ -50,6 +50,7 @@ The smoke must prove:
   - `codex_mcp_status_list`
   - `codex_operation_read`
   - `codex_operation_wait`
+  - `codex_secret_status`
   - `codex_session_close`
   - `codex_session_continue`
   - `codex_session_hard_relaunch`
@@ -65,6 +66,7 @@ The smoke must prove:
 - `resources/list` includes `codex-session-manager://guide`,
   `codex-session-manager://workflows`,
   `codex-session-manager://workflows/mcp-handling`,
+  `codex-session-manager://secrets`,
   `codex-session-manager://safety`,
   `codex-session-manager://global-install`, and
   `codex-session-manager://operations`.
@@ -82,9 +84,31 @@ The smoke must prove:
   npm.cmd ...` only as fallback.
 - CLI/MCP `mcp local add npm` supports secret-bearing MCPs through `env_vars` /
   `--env-var` without storing secret values in `.codex/config.toml`.
+- CLI `secret set/list/status/unset` stores API keys/tokens by env var name
+  without accepting values as command arguments or printing values in output.
+- `codex_secret_status` reports only env var availability and source, never
+  secret values.
+- `codex_mcp_package_inspect` / CLI `mcp inspect npm` extracts candidate
+  credential env var names from npm metadata/README without package-specific
+  hardcoding.
+- `codex_mcp_install_npm` / CLI `mcp install npm` is the preferred npm MCP
+  install entrypoint, defaults to local scope, and requires explicit
+  `scope:"global"` / `--scope global` for user-global MCP config.
+- MCP server initialization instructions must front-load
+  `codex_mcp_install_npm`, including the instruction to use it before raw
+  shell/npm/Codex MCP commands. This guards against agents ignoring the managed
+  install path after project `AGENTS.md` guidance was removed.
 - CLI/MCP `mcp local add npm` reports that `env_vars` stores names only, and that
-  values created after App Server launch require App Server restart/relaunch
-  or a reviewed wrapper before refresh.
+  values created after App Server launch require the agent to use
+  session-manager refresh, continuation, replacement, or lifecycle tools before
+  MCP validation. The agent must not ask the operator to restart Codex manually.
+- CLI/MCP `mcp local add npm` and `mcp global add npm` report structured
+  `envVarStatus`; if a configured env var is missing, agents must stop secret
+  MCP validation, ask the operator to run `secret set`, and must not treat
+  keyless/fallback tool behavior as proof.
+- CLI/MCP `mcp local add npm` and `mcp global add npm` refuse real install when
+  package inspection finds candidate credential env vars and `envVars` is
+  empty, unless `allowNoEnvVars` / `--allow-no-env-vars` is explicitly selected.
 - `codex_session_manager_help` and the guidance resources instruct agents to
   prefer read-only OAuth scopes first, require explicit operator approval for
   write/delete scopes, avoid patching `node_modules`, avoid visible
@@ -148,6 +172,10 @@ Current checks:
   workspace paths;
 - report App Server URL resolution source with environment taking precedence
   over primary state and primary state taking precedence over legacy state;
+- persist App Server launcher runtime identity and refuse automatic reuse of
+  legacy or incompatible runtime state, including Windows native shells versus
+  WSL path flavor. Explicit `--url`/`appServerUrl` and `CODEX_APP_SERVER_URL`
+  remain operator overrides.
 - read MCP server status for a target thread.
 - recommend a target thread by marker/cwd/status evidence;
 - read and wait for operation records.

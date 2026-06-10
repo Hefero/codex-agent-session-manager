@@ -1,7 +1,14 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
-import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState, type AppServerState } from '../app-server/state.js';
+import {
+  appServerRuntimeCompatibility,
+  appServerStateFileForWorkspace,
+  readAppServerStateFile,
+  writeAppServerState,
+  type AppServerRuntimeIdentity,
+  type AppServerState,
+} from '../app-server/state.js';
 import {
   collectProcessTree,
   commandLineTokens,
@@ -87,6 +94,10 @@ interface ManagedAppServerTarget {
   pid: number | null;
   owned: boolean;
   workspaceMatches: boolean;
+  runtimeMatches: boolean;
+  runtimeMismatchReason: string | null;
+  currentRuntime: AppServerRuntimeIdentity;
+  stateRuntime: AppServerRuntimeIdentity | null;
   stateStatus: string | null;
   processAlive: boolean;
   processTree: ProcessEntry[];
@@ -152,13 +163,18 @@ function managedAppServerTarget(input: {
   const url = validatedStateUrl(state);
   const owned = state?.owned === true;
   const workspaceMatches = typeof state?.workspace === 'string' && pathsMatch(state.workspace, input.workspace);
+  const runtime = appServerRuntimeCompatibility(state);
   const processAlive = pid !== null && input.processes.some((entry) => entry.pid === pid);
   const processTree = pid === null || input.includeProcessTree === false ? [] : collectProcessTree(input.processes, [pid]);
 
   let canStop = false;
   let stopReason = 'No primary App Server launcher state exists for this workspace.';
-  if (read.exists && !read.ok) {
+  if (!read.exists) {
+    stopReason = 'No primary App Server launcher state exists for this workspace.';
+  } else if (!read.ok) {
     stopReason = 'Primary App Server launcher state is invalid JSON.';
+  } else if (!runtime.matches) {
+    stopReason = runtime.reason ?? 'Primary App Server launcher state runtime does not match the current runtime.';
   } else if (!owned) {
     stopReason = 'Primary App Server launcher state is not marked owned by this workspace.';
   } else if (!workspaceMatches) {
@@ -182,6 +198,10 @@ function managedAppServerTarget(input: {
     pid,
     owned,
     workspaceMatches,
+    runtimeMatches: runtime.matches,
+    runtimeMismatchReason: runtime.reason,
+    currentRuntime: runtime.current,
+    stateRuntime: runtime.stateRuntime,
     stateStatus: typeof state?.status === 'string' ? state.status : null,
     processAlive,
     processTree,
@@ -280,6 +300,10 @@ function publicTarget(target: ManagedAppServerTarget, workspace: string, include
     pid: target.pid,
     owned: target.owned,
     workspaceMatches: target.workspaceMatches,
+    runtimeMatches: target.runtimeMatches,
+    runtimeMismatchReason: target.runtimeMismatchReason,
+    currentRuntime: target.currentRuntime,
+    stateRuntime: target.stateRuntime,
     stateStatus: target.stateStatus,
     processAlive: target.processAlive,
     canStop: target.canStop,
@@ -350,6 +374,7 @@ function reconcileDeadManagedState(input: {
     || !target.stateOk
     || !target.owned
     || !target.workspaceMatches
+    || !target.runtimeMatches
     || target.pid === null
     || target.url === null
     || target.processAlive

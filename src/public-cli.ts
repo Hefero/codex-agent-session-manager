@@ -6,7 +6,9 @@ import { buildGlobalMcpAddNpmPayload, buildGlobalMcpRemovePayload } from './tool
 import { buildLocalMcpAddNpmPayload } from './tools/mcp-add-npm.js';
 import { buildMcpCleanupReportPayload } from './tools/mcp-report.js';
 import { buildMcpRefreshPayload } from './tools/mcp-refresh.js';
+import { buildMcpInstallNpmPayload } from './tools/mcp-install-npm.js';
 import { buildLocalMcpRemovePayload } from './tools/mcp-remove.js';
+import { buildNpmPackageInspectPayload, inspectNpmPackageForMcp } from './tools/npm-package-inspect.js';
 import { buildOperationReadPayload, buildOperationWaitPayload, OperationStore } from './tools/operations.js';
 import { buildSessionClosePayload } from './tools/session-close.js';
 import { buildSessionLaunchPayload } from './tools/session-launch.js';
@@ -19,6 +21,7 @@ const MAX_PROMPT_FILE_BYTES = 16_384;
 
 const booleanFlags = new Set([
   'allow-scripts',
+  'allow-no-env-vars',
   'allow-workspace-url-fallback',
   'bypass-sandbox',
   'confirm',
@@ -64,6 +67,8 @@ function usage(): string {
   codex-agent-session-manager mcp local remove <server-name> [options]
   codex-agent-session-manager mcp global add npm <package-spec> [options]
   codex-agent-session-manager mcp global remove <server-name> [options]
+  codex-agent-session-manager mcp install npm <package-spec> [options]
+  codex-agent-session-manager mcp inspect npm <package-spec>
   codex-agent-session-manager mcp report [options]
   codex-agent-session-manager mcp refresh --thread-id <thread-id> [options]
   codex-agent-session-manager operation read --operation-id <operation-id>
@@ -91,14 +96,19 @@ App Server:
 MCP:
   local add npm:  --server-name <name> --entrypoint <package-relative-js>
                   --arg <value> --no-default-stdio-arg --env-var <name>
-                  --dry-run --confirm --allow-scripts
+                  --dry-run --confirm --allow-scripts --allow-no-env-vars
   local remove:   --uninstall-package --dry-run --confirm
   global add npm: --server-name <name> --entrypoint <package-relative-js>
                   --arg <value> --no-default-stdio-arg --env-var <name>
                   --config <path> --state-dir <path>
-                  --dry-run --confirm --allow-scripts
+                  --dry-run --confirm --allow-scripts --allow-no-env-vars
   global remove:  --uninstall-package --config <path> --state-dir <path>
                   --dry-run --confirm
+  install npm:    --scope <local|global> --server-name <name>
+                  --entrypoint <package-relative-js> --arg <value>
+                  --no-default-stdio-arg --env-var <name>
+                  --config <path> --state-dir <path>
+                  --dry-run --confirm --allow-scripts --allow-no-env-vars
   report:         --no-global --no-operations
                   --global-config <path> --global-state-dir <path>
   refresh: --highlight-tool <name> --continuation-timeout-ms <ms>
@@ -450,13 +460,14 @@ function mcpNpmAddInput(flags: Map<string, string[]>, packageSpec: string): Reco
   addOptional(input, 'extraArgs', hasFlag(flags, 'no-default-stdio-arg') ? [] : stringListFlag(flags, 'arg'));
   addOptional(input, 'envVars', stringListFlag(flags, 'env-var'));
   if (hasFlag(flags, 'allow-scripts')) input.allowScripts = true;
+  if (hasFlag(flags, 'allow-no-env-vars')) input.allowNoEnvVars = true;
   addDryRunConfirm(input, flags);
   return input;
 }
 
 function localMcpCommand(action: string | undefined, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
   if (action === 'add') {
-    assertAllowedFlags(flags, ['server-name', 'entrypoint', 'arg', 'no-default-stdio-arg', 'env-var', 'allow-scripts', 'dry-run', 'confirm'], 'mcp local add npm');
+    assertAllowedFlags(flags, ['server-name', 'entrypoint', 'arg', 'no-default-stdio-arg', 'env-var', 'allow-scripts', 'allow-no-env-vars', 'dry-run', 'confirm'], 'mcp local add npm');
     const [provider, packageSpec, extra] = rest;
     if (provider !== 'npm') {
       failCli({
@@ -542,7 +553,7 @@ function localMcpCommand(action: string | undefined, flags: Map<string, string[]
 
 function globalMcpCommand(action: string | undefined, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
   if (action === 'add') {
-    assertAllowedFlags(flags, ['server-name', 'entrypoint', 'arg', 'no-default-stdio-arg', 'env-var', 'allow-scripts', 'config', 'state-dir', 'dry-run', 'confirm'], 'mcp global add npm');
+    assertAllowedFlags(flags, ['server-name', 'entrypoint', 'arg', 'no-default-stdio-arg', 'env-var', 'allow-scripts', 'allow-no-env-vars', 'config', 'state-dir', 'dry-run', 'confirm'], 'mcp global add npm');
     const [provider, packageSpec, extra] = rest;
     if (provider !== 'npm') {
       failCli({
@@ -631,9 +642,96 @@ function globalMcpCommand(action: string | undefined, flags: Map<string, string[
   });
 }
 
+function mcpInstallCommand(flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
+  assertAllowedFlags(flags, ['scope', 'server-name', 'entrypoint', 'arg', 'no-default-stdio-arg', 'env-var', 'allow-scripts', 'allow-no-env-vars', 'config', 'state-dir', 'dry-run', 'confirm'], 'mcp install npm');
+  const [provider, packageSpec, extra] = rest;
+  if (provider !== 'npm') {
+    failCli({
+      code: 'unknown_mcp_provider',
+      message: `Unknown mcp install provider: ${provider ?? '<missing>'}`,
+      command: 'mcp install',
+      parameter: 'provider',
+      received: provider ?? '<missing>',
+      expected: 'npm',
+      examples: ['codex-agent-session-manager mcp install npm @modelcontextprotocol/server-everything --dry-run'],
+      nextAction: 'Use the npm provider.',
+    });
+  }
+  if (packageSpec === undefined || packageSpec.length === 0) {
+    failCli({
+      code: 'missing_package_spec',
+      message: 'mcp install npm requires a package spec.',
+      command: 'mcp install npm',
+      parameter: 'package-spec',
+      expected: 'An npm registry package spec, such as @scope/name, name, or name@version.',
+      examples: ['codex-agent-session-manager mcp install npm @modelcontextprotocol/server-everything --dry-run'],
+      nextAction: 'Add the npm package spec immediately after npm.',
+    });
+  }
+  if (extra !== undefined) {
+    failCli({
+      code: 'unexpected_argument',
+      message: `Unexpected argument for mcp install npm: ${extra}`,
+      command: 'mcp install npm',
+      parameter: 'positional',
+      received: extra,
+      expected: 'Only one npm package spec positional argument.',
+      examples: ['codex-agent-session-manager mcp install npm @modelcontextprotocol/server-everything --server-name everything --dry-run'],
+      nextAction: 'Move additional runtime args behind repeated --arg flags, or remove the extra positional argument.',
+    });
+  }
+
+  const input = mcpNpmAddInput(flags, packageSpec);
+  addOptional(input, 'scope', stringFlag(flags, 'scope'));
+  addOptional(input, 'configPath', stringFlag(flags, 'config'));
+  addOptional(input, 'stateDir', stringFlag(flags, 'state-dir'));
+  return { command: 'mcp', subcommand: 'install-npm', input };
+}
+
 function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: readonly string[]): ParsedPublicCommand {
   if (subcommand === 'local') return localMcpCommand(rest[0], flags, rest.slice(1));
   if (subcommand === 'global') return globalMcpCommand(rest[0], flags, rest.slice(1));
+  if (subcommand === 'install') return mcpInstallCommand(flags, rest);
+  if (subcommand === 'inspect') {
+    assertAllowedFlags(flags, [], 'mcp inspect npm');
+    const [provider, packageSpec, extra] = rest;
+    if (provider !== 'npm') {
+      failCli({
+        code: 'unknown_mcp_provider',
+        message: `Unknown mcp inspect provider: ${provider ?? '<missing>'}`,
+        command: 'mcp inspect',
+        parameter: 'provider',
+        received: provider ?? '<missing>',
+        expected: 'npm',
+        examples: ['codex-agent-session-manager mcp inspect npm tavily-mcp'],
+        nextAction: 'Use the npm provider.',
+      });
+    }
+    if (packageSpec === undefined || packageSpec.length === 0) {
+      failCli({
+        code: 'missing_package_spec',
+        message: 'mcp inspect npm requires a package spec.',
+        command: 'mcp inspect npm',
+        parameter: 'package-spec',
+        expected: 'An npm registry package spec, such as @scope/name, name, or name@version.',
+        examples: ['codex-agent-session-manager mcp inspect npm tavily-mcp'],
+        nextAction: 'Add the npm package spec immediately after npm.',
+      });
+    }
+    if (extra !== undefined) {
+      failCli({
+        code: 'unexpected_argument',
+        message: `Unexpected argument for mcp inspect npm: ${extra}`,
+        command: 'mcp inspect npm',
+        parameter: 'positional',
+        received: extra,
+        expected: 'Only one npm package spec positional argument.',
+        examples: ['codex-agent-session-manager mcp inspect npm tavily-mcp'],
+        nextAction: 'Remove the extra argument.',
+      });
+    }
+    return { command: 'mcp', subcommand: 'inspect-npm', input: { packageSpec } };
+  }
   if (subcommand === 'report') {
     assertNoExtraPositionals(rest, 'mcp report');
     assertAllowedFlags(flags, ['no-global', 'no-operations', 'global-config', 'global-state-dir'], 'mcp report');
@@ -652,7 +750,7 @@ function mcpCommand(subcommand: string, flags: Map<string, string[]>, rest: read
       command: 'mcp',
       parameter: 'subcommand',
       received: subcommand,
-      expected: 'One of: local, global, report, refresh.',
+      expected: 'One of: local, global, install, inspect, report, refresh.',
       examples: ['codex-agent-session-manager mcp report', 'codex-agent-session-manager mcp refresh --thread-id <thread-id>'],
       nextAction: 'Choose a supported mcp subcommand.',
     });
@@ -829,14 +927,26 @@ async function payloadFor(command: ParsedPublicCommand): Promise<Record<string, 
   if (command.command === 'mcp' && command.subcommand === 'refresh') {
     return buildMcpRefreshPayload(command.input as Parameters<typeof buildMcpRefreshPayload>[0]);
   }
+  if (command.command === 'mcp' && command.subcommand === 'inspect-npm') {
+    return buildNpmPackageInspectPayload(command.input as Parameters<typeof buildNpmPackageInspectPayload>[0]);
+  }
+  if (command.command === 'mcp' && command.subcommand === 'install-npm') {
+    return buildMcpInstallNpmPayload(command.input as Parameters<typeof buildMcpInstallNpmPayload>[0], {
+      packageInspector: (packageSpec) => inspectNpmPackageForMcp({ packageSpec }),
+    });
+  }
   if (command.command === 'mcp' && command.subcommand === 'local-add-npm') {
-    return buildLocalMcpAddNpmPayload(command.input as Parameters<typeof buildLocalMcpAddNpmPayload>[0]);
+    return buildLocalMcpAddNpmPayload(command.input as Parameters<typeof buildLocalMcpAddNpmPayload>[0], {
+      packageInspector: (packageSpec) => inspectNpmPackageForMcp({ packageSpec }),
+    });
   }
   if (command.command === 'mcp' && command.subcommand === 'local-remove') {
     return buildLocalMcpRemovePayload(command.input as Parameters<typeof buildLocalMcpRemovePayload>[0]);
   }
   if (command.command === 'mcp' && command.subcommand === 'global-add-npm') {
-    return buildGlobalMcpAddNpmPayload(command.input as Parameters<typeof buildGlobalMcpAddNpmPayload>[0]);
+    return buildGlobalMcpAddNpmPayload(command.input as Parameters<typeof buildGlobalMcpAddNpmPayload>[0], {
+      packageInspector: (packageSpec) => inspectNpmPackageForMcp({ packageSpec }),
+    });
   }
   if (command.command === 'mcp' && command.subcommand === 'global-remove') {
     return buildGlobalMcpRemovePayload(command.input as Parameters<typeof buildGlobalMcpRemovePayload>[0]);

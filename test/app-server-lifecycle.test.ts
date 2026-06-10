@@ -4,7 +4,13 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState } from '../src/app-server/state.js';
+import {
+  appServerStateFileForWorkspace,
+  currentAppServerRuntimeIdentity,
+  readAppServerStateFile,
+  writeAppServerState,
+  type AppServerRuntimeIdentity,
+} from '../src/app-server/state.js';
 import type { ProcessEntry } from '../src/processes.js';
 import {
   buildAppServerStatusPayload,
@@ -21,6 +27,13 @@ function tempWorkspace(): string {
   const workspace = join(tmpdir(), `codex-agent-session-manager-app-server-lifecycle-${crypto.randomUUID()}`);
   mkdirSync(workspace, { recursive: true });
   return workspace;
+}
+
+function incompatibleRuntime(): AppServerRuntimeIdentity {
+  const current = currentAppServerRuntimeIdentity();
+  return current.pathFlavor === 'windows'
+    ? { platform: 'linux', arch: 'x64', isWsl: true, pathFlavor: 'wsl', wslDistroName: 'Ubuntu-24.04' }
+    : { platform: 'win32', arch: 'x64', isWsl: false, pathFlavor: 'windows' };
 }
 
 function tempStore(): { workspace: string; store: OperationStore; cleanup(): void } {
@@ -231,6 +244,46 @@ test('buildAppServerStatusPayload reconciles stale ready state when managed proc
     assert.equal(state?.status, 'stopped');
     assert.equal(state?.pid, null);
     assert.equal(store.read('op-stop-stale')?.status, 'completed');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('buildAppServerStatusPayload refuses incompatible runtime state as a managed stop target', async () => {
+  const fixture = tempStore();
+  const { workspace } = fixture;
+  try {
+    writeAppServerState(
+      {
+        url: appServerUrl,
+        pid: 40,
+        owned: true,
+        reusedServer: false,
+        status: 'ready',
+        workspace,
+        runtime: incompatibleRuntime(),
+      },
+      workspace,
+    );
+
+    const payload = await buildAppServerStatusPayload(
+      { probeReady: false },
+      {
+        workspace,
+        processLister: () => processFixture(workspace),
+      },
+    );
+
+    const target = payload.managedAppServer as {
+      canStop?: boolean;
+      runtimeMatches?: boolean;
+      runtimeMismatchReason?: string;
+      stopReason?: string;
+    };
+    assert.equal(target.runtimeMatches, false);
+    assert.equal(target.canStop, false);
+    assert.match(target.runtimeMismatchReason ?? '', /runtime|paths|created on|identity/iu);
+    assert.match(target.stopReason ?? '', /runtime|paths|created on|identity/iu);
   } finally {
     fixture.cleanup();
   }

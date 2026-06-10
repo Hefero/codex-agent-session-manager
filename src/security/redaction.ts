@@ -59,6 +59,10 @@ export function redactSensitiveText(value: unknown): string {
       '$1<redacted>',
     )
     .replace(
+      /(["']?[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY_ID|ACCESS_TOKEN|SECRET_ACCESS_KEY)["']?\s*:\s*)(?:"[^"]*"|'[^']*'|[^\s,}\]]+)/gu,
+      '$1<redacted>',
+    )
+    .replace(
       /\b((?:api[_-]?key|auth[_-]?token|client[_-]?secret|password|refresh[_-]?token|secret|token)\s*[:=]\s*)[^\s"']+/giu,
       '$1<redacted>',
     )

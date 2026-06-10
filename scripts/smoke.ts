@@ -67,6 +67,16 @@ try {
 
   const init = await waitForResponse(1);
   if (init.error) throw new Error(`initialize failed: ${init.error.message ?? 'unknown'}`);
+  const instructions = (init.result as { instructions?: string }).instructions ?? '';
+  const firstInstructions = instructions.slice(0, 512);
+  if (
+    !firstInstructions.includes('codex_mcp_install_npm')
+    || !firstInstructions.includes('before any shell/npm/codex mcp command')
+    || !firstInstructions.includes('Never ask the operator to restart')
+    || !firstInstructions.includes('secret set <NAME>')
+  ) {
+    throw new Error(`Server instructions do not front-load npm MCP install workflow: ${instructions}`);
+  }
 
   send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
 
@@ -82,6 +92,9 @@ try {
     'codex_thread_context',
     'codex_operation_read',
     'codex_operation_wait',
+    'codex_secret_status',
+    'codex_mcp_install_npm',
+    'codex_mcp_package_inspect',
     'codex_local_mcp_add_npm',
     'codex_mcp_cleanup_report',
     'codex_mcp_reload',
@@ -213,6 +226,21 @@ try {
     throw new Error(`Unexpected mcp cleanup report result: ${mcpReportText}`);
   }
 
+  send({
+    jsonrpc: '2.0',
+    id: 62,
+    method: 'tools/call',
+    params: {
+      name: 'codex_secret_status',
+      arguments: { names: ['TAVILY_API_KEY'], scope: 'user' },
+    },
+  });
+  const secretStatusCall = await waitForResponse(62);
+  const secretStatusText = ((secretStatusCall.result as { content?: Array<{ text?: string }> }).content ?? [])[0]?.text ?? '';
+  if (!secretStatusText.includes('"ok": true') || !secretStatusText.includes('"TAVILY_API_KEY"') || secretStatusText.includes('tvly-')) {
+    throw new Error(`Unexpected secret status result: ${secretStatusText}`);
+  }
+
   send({ jsonrpc: '2.0', id: 7, method: 'resources/list', params: {} });
   const resources = await waitForResponse(7);
   const resourceUris =
@@ -221,6 +249,7 @@ try {
     'codex-session-manager://guide',
     'codex-session-manager://workflows',
     'codex-session-manager://workflows/mcp-handling',
+    'codex-session-manager://secrets',
     'codex-session-manager://safety',
     'codex-session-manager://global-install',
     'codex-session-manager://operations',
@@ -255,6 +284,7 @@ try {
     || !cliHelp.stdout.includes('codex-agent-session-manager init [options]')
     || !cliHelp.stdout.includes('codex-agent-session-manager deinit [options]')
     || !cliHelp.stdout.includes('codex-agent-session-manager global <install|uninstall|status>')
+    || !cliHelp.stdout.includes('codex-agent-session-manager secret <set|list|status|unset>')
     || !cliHelp.stdout.includes('codex-agent-session-manager stop [options]')
     || !cliHelp.stdout.includes('codex-agent-session-manager app-server <start|status|stop>')
   ) {
@@ -337,6 +367,27 @@ try {
     || !cliMcpReport.stdout.includes('"managedServerCount"')
   ) {
     throw new Error(`Unexpected CLI mcp report result: stdout=${cliMcpReport.stdout} stderr=${cliMcpReport.stderr}`);
+  }
+
+  const cliSecretStatus = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', cliEntry, 'secret', 'status', 'TAVILY_API_KEY'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CODEX_AGENT_SESSION_MANAGER_SECRETS_FILE: join(tmpdir(), 'codex-agent-session-manager-smoke-secrets.json'),
+        TAVILY_API_KEY: '',
+      },
+    },
+  );
+  if (
+    cliSecretStatus.status !== 0
+    || !cliSecretStatus.stdout.includes('codex-agent-session-manager secret status')
+    || !cliSecretStatus.stdout.includes('TAVILY_API_KEY: missing')
+  ) {
+    throw new Error(`Unexpected CLI secret status result: stdout=${cliSecretStatus.stdout} stderr=${cliSecretStatus.stderr}`);
   }
 
   const cliGlobalMcpAdd = spawnSync(

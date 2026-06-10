@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { packageName, packageVersion } from '../version.js';
 
-export const guidanceTopics = ['overview', 'workflows', 'mcp-handling', 'refresh-proof', 'safety', 'shell-hook', 'global-install'] as const;
+export const guidanceTopics = ['overview', 'workflows', 'mcp-handling', 'secrets', 'refresh-proof', 'safety', 'shell-hook', 'global-install'] as const;
 export type GuidanceTopic = (typeof guidanceTopics)[number];
 
 export const guidanceInputSchema = {
@@ -36,18 +36,21 @@ const overview = lines([
   'Start here:',
   '1. Call `codex_session_manager_help` with `topic: "workflows"` for the common decision tree.',
   '2. Call `codex_session_manager_help` with `topic: "mcp-handling"` before adding or removing a third-party npm MCP.',
-  '3. Call `codex_session_manager_help` with `topic: "safety"` before OAuth, PII, write-capable, or destructive MCPs.',
-  '4. Call `codex_session_manager_help` with `topic: "global-install"` before editing user-global Codex config.',
+  '3. Call `codex_session_manager_help` with `topic: "secrets"` before configuring API-key or OAuth-token MCPs.',
+  '4. Call `codex_session_manager_help` with `topic: "safety"` before OAuth, PII, write-capable, or destructive MCPs.',
+  '5. Call `codex_session_manager_help` with `topic: "global-install"` before editing user-global Codex config.',
 ]);
 
 const workflows = lines([
   '# Session Manager Workflows',
   '',
   'Add or change an MCP:',
-  '1. Use `codex_local_mcp_add_npm` for project-local npm MCPs when possible. It installs locally, disables lifecycle scripts by default, and writes project-scoped config.',
-  '2. Use `codex_global_mcp_add_npm` only when the operator explicitly wants a user-global MCP visible outside this project.',
-  '3. Use `codex_mcp_refresh` with an explicit `threadId` to schedule reload plus a continuation turn.',
-  '4. In the continuation, call the changed MCP tool from the model-callable catalog. Status-only checks do not prove success.',
+  '1. Use `codex_mcp_install_npm` when the user asks to install an npm MCP. It is the preferred high-level entrypoint and installs project-local by default.',
+  '2. `codex_mcp_install_npm` inspects the package before install. If it finds candidate env vars, ask the operator to run `codex-agent-session-manager secret set <NAME>` outside chat, then rerun with those names in `envVars`.',
+  '3. Use `scope:"global"` only when the operator explicitly wants a user-global MCP visible outside this project.',
+  '4. Do not ask the operator to restart Codex, App Server, or the session manually. Use session-manager refresh, continuation, replacement, or lifecycle tools yourself.',
+  '5. Use `codex_mcp_refresh` with an explicit `threadId` to schedule reload plus a continuation turn.',
+  '6. In the continuation, call the changed MCP tool from the model-callable catalog. Status-only checks do not prove success.',
   '',
   'Remove a managed npm MCP:',
   '1. Use `codex_mcp_cleanup_report` first when you need to inspect managed local/global MCP cleanup state.',
@@ -71,22 +74,30 @@ const mcpHandling = lines([
   '# npm MCP Handling',
   '',
   'Project-local path:',
-  '- Call `codex_local_mcp_add_npm` instead of raw `npm install` when installing an npm MCP into the current project.',
+  '- Call `codex_mcp_install_npm` instead of raw `npm install`, raw `codex mcp add`, or manual config edits when installing an npm MCP.',
+  '- It calls the same package-inspection flow as `codex_mcp_package_inspect`, which reads npm metadata/README and generically extracts likely credential env var names without package-specific hardcoding.',
+  '- Low-level alternative: `codex_local_mcp_add_npm` installs into the current project after you already know the intended scope and env vars.',
   '- It uses a workspace-local npm cache, disables lifecycle scripts by default, and writes only project-scoped `.codex/config.toml`.',
   '- Call `codex_local_mcp_remove` to remove a managed project-local MCP block later; set `uninstallPackage:true` only when the npm package should also be removed.',
   '',
   'User-global path:',
-  '- Call `codex_global_mcp_add_npm` only after the operator explicitly wants the MCP in user-global Codex config.',
+  '- Prefer `codex_mcp_install_npm` with `scope:"global"` after the operator explicitly wants the MCP in user-global Codex config.',
+  '- Low-level alternative: `codex_global_mcp_add_npm` for advanced/global config overrides.',
   '- It installs into an isolated runtime under the session-manager global state directory and writes a marked `~/.codex/config.toml` block.',
   '- Call `codex_global_mcp_remove` to remove that managed global block; set `uninstallPackage:true` only when the isolated runtime should also be removed.',
   '',
   'Shared options:',
+  '- If package inspection returns `candidateEnvVars`, ask the operator to run `codex-agent-session-manager secret set <NAME>` for those names, then pass the same names in `envVars` when installing.',
+  '- If an add tool refuses because `envVars` is empty, do not bypass it unless the operator explicitly confirms the package does not need credential env vars; then use `allowNoEnvVars:true`.',
   '- Use `--env-var` in the CLI or `envVars` in the MCP tool for secret-bearing MCPs. This stores env var names only, never secret values.',
+  '- The add tools return `envVarStatus`. If any configured env var is missing, ask the operator to run `codex-agent-session-manager secret set <NAME>` in a terminal before claiming success.',
+  '- Use `codex_secret_status` before and after installing secret-bearing MCPs. If a required name is missing, ask the operator to run `codex-agent-session-manager secret set <NAME>` in a terminal.',
+  '- Do not treat keyless, demo, fallback, or partial behavior as proof when `envVars` was configured. The configured env var must be available to the managed App Server process.',
   '- Use `noDefaultStdioArg` only for packages whose entrypoint does not expect the default `stdio` argument.',
   '- Use `allowScripts:true` only after reviewing packages that need lifecycle scripts.',
   '',
   'After add/remove:',
-  '1. If new env vars were created after App Server started, restart/relaunch the managed App Server so the MCP process inherits them.',
+  '1. If new env vars were created after App Server started, use session-manager refresh, continuation, replacement, or lifecycle tools yourself so the target MCP process can inherit them. Do not ask the operator to restart Codex manually.',
   '2. Use `codex_mcp_cleanup_report` when you need a read-only summary of managed blocks, package/runtime state, and recent add/remove operations.',
   '3. Run `codex_mcp_refresh` for reload plus continuation.',
   '4. Validate by calling the added MCP tool, or by confirming the removed namespace is absent, from the model-callable catalog.',
@@ -114,12 +125,33 @@ const refreshProof = lines([
   '- If a rename or schema change remains stale, use a replacement/fresh session as fallback and record evidence.',
 ]);
 
+const secrets = lines([
+  '# Secret Handling',
+  '',
+  'Operator CLI:',
+  '- Use `codex-agent-session-manager secret set NAME` to save API keys/tokens with hidden interactive input.',
+  '- Use `codex-agent-session-manager secret set NAME --stdin` only for password-manager or CI integration. Never pass secret values as command arguments.',
+  '- Use `secret list`, `secret status NAME`, and `secret unset NAME` for inspection and cleanup. These commands never print secret values.',
+  '- The default scope is user-local. `--scope workspace` stores under the ignored project runtime directory for project-specific secrets.',
+  '',
+  'Agent MCP workflow:',
+  '- Use `codex_secret_status` to check whether required env var names are available. It never returns values.',
+  '- Configure MCPs with `envVars` only. MCP config stores names such as `TAVILY_API_KEY`, never values.',
+  '- When an install tool reports `envVarStatus.allAvailable:false`, stop validation and ask the operator for `secret set`. A successful call in keyless/fallback mode is not proof of the configured secret-bearing MCP.',
+  '- If a secret is missing, ask the operator to run the CLI command outside chat, then use session-manager refresh, continuation, replacement, or lifecycle tools yourself before MCP validation. Do not ask the operator to restart Codex manually.',
+  '',
+  'Storage:',
+  '- Alpha storage is a user-local or workspace-local restricted JSON file. It avoids shell history, chat logs, TOML config, package.json, and repo files.',
+  '- Native OS keychain support can be added later without changing the MCP config contract.',
+]);
+
 const safety = lines([
   '# Safety Guidance',
   '',
   'For OAuth, PII, write-capable, or destructive MCPs:',
   '- Prefer read-only scopes first. Escalate to read/write or delete scopes only after explicit operator approval.',
-  '- Keep OAuth client files, tokens, and API keys outside the workspace or under ignored paths such as `.secrets/`.',
+  '- Use `codex-agent-session-manager secret set <NAME>` for API keys/tokens that can be represented as env vars.',
+  '- Keep OAuth client files and non-env credential files outside the workspace or under ignored paths such as `.secrets/`.',
   '- Do not print secret values, raw token files, or credential-bearing URLs.',
   '- Prefer project-local config over user-global config.',
   '- Review tool outputs before embedding URLs or acting on external data.',
@@ -192,6 +224,13 @@ export const guidanceResources: GuidanceResource[] = [
     text: mcpHandling,
   },
   {
+    uri: 'codex-session-manager://secrets',
+    name: 'secrets',
+    title: 'Secret Handling Guide',
+    description: 'Guidance for storing API keys/tokens by env var name without putting values in chat or config.',
+    text: secrets,
+  },
+  {
     uri: 'codex-session-manager://safety',
     name: 'safety',
     title: 'Session Manager Safety Guide',
@@ -211,6 +250,7 @@ const topicText: Record<GuidanceTopic, string> = {
   overview,
   workflows,
   'mcp-handling': mcpHandling,
+  secrets,
   'refresh-proof': refreshProof,
   safety,
   'shell-hook': shellHook,

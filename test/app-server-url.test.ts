@@ -5,7 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { resolveAppServerUrl } from '../src/app-server/config.js';
+import {
+  appServerStateFileForWorkspace,
+  currentAppServerRuntimeIdentity,
+  writeAppServerState,
+  type AppServerRuntimeIdentity,
+} from '../src/app-server/state.js';
 import { validateAppServerUrl } from '../src/security/url.js';
+
+function incompatibleRuntime(): AppServerRuntimeIdentity {
+  const current = currentAppServerRuntimeIdentity();
+  return current.pathFlavor === 'windows'
+    ? { platform: 'linux', arch: 'x64', isWsl: true, pathFlavor: 'wsl', wslDistroName: 'Ubuntu-24.04' }
+    : { platform: 'win32', arch: 'x64', isWsl: false, pathFlavor: 'windows' };
+}
 
 test('validateAppServerUrl accepts loopback websocket roots', () => {
   assert.deepEqual(validateAppServerUrl('ws://127.0.0.1:4506'), {
@@ -42,7 +55,7 @@ test('resolveAppServerUrl prefers explicit input then environment', () => {
   );
   assert.equal(resolveAppServerUrl(undefined, { CODEX_APP_SERVER_URL: 'ws://127.0.0.1:4508' }), 'ws://127.0.0.1:4508');
   try {
-    assert.throws(() => resolveAppServerUrl(undefined, {}, workspaceWithoutState), /No App Server URL is configured/);
+    assert.throws(() => resolveAppServerUrl(undefined, {}, workspaceWithoutState), /No compatible App Server URL is configured/);
   } finally {
     rmSync(workspaceWithoutState, { recursive: true, force: true });
   }
@@ -53,15 +66,48 @@ test('resolveAppServerUrl falls back to workspace launcher state', () => {
   try {
     const legacyStateDir = join(workspace, '.codex-mcp-hot-reloader', 'state');
     mkdirSync(legacyStateDir, { recursive: true });
-    writeFileSync(join(legacyStateDir, 'app-server.json'), `${JSON.stringify({ url: 'ws://127.0.0.1:4510' })}\n`);
+    writeFileSync(
+      appServerStateFileForWorkspace(workspace, 'legacy'),
+      `${JSON.stringify({ url: 'ws://127.0.0.1:4510', runtime: currentAppServerRuntimeIdentity() })}\n`,
+    );
 
     assert.equal(resolveAppServerUrl(undefined, {}, workspace), 'ws://127.0.0.1:4510');
 
-    const primaryStateDir = join(workspace, '.codex-agent-session-manager', 'state');
-    mkdirSync(primaryStateDir, { recursive: true });
-    writeFileSync(join(primaryStateDir, 'app-server.json'), `${JSON.stringify({ url: 'ws://127.0.0.1:4511' })}\n`);
+    writeAppServerState({ url: 'ws://127.0.0.1:4511' }, workspace);
 
     assert.equal(resolveAppServerUrl(undefined, {}, workspace), 'ws://127.0.0.1:4511');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('resolveAppServerUrl refuses incompatible workspace launcher state', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'codex-session-manager-'));
+  try {
+    writeAppServerState({
+      url: 'ws://127.0.0.1:4511',
+      runtime: incompatibleRuntime(),
+    }, workspace);
+
+    assert.throws(
+      () => resolveAppServerUrl(undefined, {}, workspace),
+      /No compatible App Server URL is configured.*Ignored incompatible workspace launcher state/iu,
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('resolveAppServerUrl treats explicit input and environment as runtime overrides', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'codex-session-manager-'));
+  try {
+    writeAppServerState({
+      url: 'ws://127.0.0.1:4511',
+      runtime: incompatibleRuntime(),
+    }, workspace);
+
+    assert.equal(resolveAppServerUrl('ws://127.0.0.1:4512', {}, workspace), 'ws://127.0.0.1:4512');
+    assert.equal(resolveAppServerUrl(undefined, { CODEX_APP_SERVER_URL: 'ws://127.0.0.1:4513' }, workspace), 'ws://127.0.0.1:4513');
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

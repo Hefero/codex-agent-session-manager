@@ -6,6 +6,7 @@ import { globalUsage, runGlobalCommand } from './global-config.js';
 import { initUsage, runInitCommand } from './init.js';
 import { publicCliUsage, runPublicCommand } from './public-cli.js';
 import { remoteUsage, runRemoteCommand } from './remote.js';
+import { runSecretCommand, secretUsage } from './secret-cli.js';
 import { shellHookUsage, runShellHookCommand } from './shell-hook.js';
 import { runAppServerStopOperationFromArgv } from './tools/app-server-lifecycle.js';
 import { runAppServerStartOperationFromArgv } from './tools/app-server-start.js';
@@ -26,6 +27,7 @@ Usage:
   codex-agent-session-manager init [options]
   codex-agent-session-manager deinit [options]
   codex-agent-session-manager global <install|uninstall|status> [options]
+  codex-agent-session-manager secret <set|list|status|unset> [options]
   codex-agent-session-manager remote [options]
   codex-agent-session-manager stop [options]
   codex-agent-session-manager app-server <start|status|stop> [options]
@@ -41,6 +43,7 @@ Commands:
   init        Initialize a project-scoped Codex session manager setup.
   deinit      Remove the project-scoped session manager scaffold.
   global      Opt-in user-global MCP config and codex shell hook management.
+  secret      Store API keys/tokens by env var name without command-line values.
   remote      Start/reuse a workspace App Server and launch Codex remote.
   stop        Alias for app-server stop.
   app-server  Manage the workspace-owned App Server lifecycle.
@@ -53,6 +56,7 @@ ${publicCliUsage()}
 ${initUsage()}
 ${deinitUsage()}
 ${globalUsage()}
+${secretUsage()}
 ${shellHookUsage()}
 `);
 }
@@ -92,6 +96,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'global') {
     process.exitCode = await runGlobalCommand(argv.slice(1));
+    return;
+  }
+
+  if (command === 'secret') {
+    process.exitCode = await runSecretCommand(argv.slice(1));
     return;
   }
 
@@ -161,7 +170,7 @@ async function main(argv: string[]): Promise<void> {
     command,
     parameter: 'command',
     received: command,
-    expected: 'One of: serve, init, deinit, global, remote, stop, app-server, mcp, operation, session, shell-hook, --help, --version.',
+    expected: 'One of: serve, init, deinit, global, secret, remote, stop, app-server, mcp, operation, session, shell-hook, --help, --version.',
     examples: ['codex-agent-session-manager --help'],
     nextAction: 'Choose a supported command or run --help.',
   }))}\n`);

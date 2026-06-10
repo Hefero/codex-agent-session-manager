@@ -2,9 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, normalize } from 'node:path';
 import { z } from 'zod';
 
+import { userError } from '../errors.js';
 import { runNpm, type NpmRunResult } from '../npm.js';
 import { redactValue } from '../security/redaction.js';
 import { assertWorkspacePath, resolveWorkspaceRoot, workspacePath } from '../security/workspace.js';
+import { OperationStore } from './operations.js';
 
 const DEFAULT_TRANSPORT_ARG = 'stdio';
 const CONFIG_MARKER_PREFIX = '# BEGIN codex-agent-session-manager:mcp-add:';
@@ -19,7 +21,7 @@ const packageSpecSchema = z
   .min(1)
   .max(MAX_PACKAGE_SPEC_CHARS)
   .refine((value) => parseRegistryPackageName(value) !== null, {
-    message: 'Only npm registry package specs are supported, for example @scope/name or name@version.',
+    message: 'Only npm registry package specs are supported for third-party MCP install, for example @scope/name or name@version. Do not pass a filesystem path or tarball here; use init --package-spec only for installing this package itself during project init.',
   })
   .describe('npm registry package spec to install locally, for example @modelcontextprotocol/server-everything.');
 
@@ -35,7 +37,7 @@ const envVarNameSchema = z
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/u)
   .describe('Environment variable name to forward to the MCP stdio server without storing its value in config.');
 
-export const mcpAddNpmInputSchema = {
+export const localMcpAddNpmInputSchema = {
   packageSpec: packageSpecSchema,
   serverName: serverNameSchema.optional(),
   entrypoint: z
@@ -62,8 +64,8 @@ export const mcpAddNpmInputSchema = {
   confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
 };
 
-const mcpAddNpmInputObject = z.object(mcpAddNpmInputSchema);
-type McpAddNpmInput = z.infer<typeof mcpAddNpmInputObject>;
+const localMcpAddNpmInputObject = z.object(localMcpAddNpmInputSchema);
+type LocalMcpAddNpmInput = z.infer<typeof localMcpAddNpmInputObject>;
 
 export type NpmRunner = (args: readonly string[], options: { cwd: string }) => NpmRunResult;
 
@@ -304,13 +306,14 @@ function actionForFile(path: string, current: string | null, next: string, works
   return { kind: current === null ? 'create' : 'update', target: previewPath(path, workspace), reason };
 }
 
-export function buildMcpAddNpmPayload(
-  input: McpAddNpmInput,
+export function buildLocalMcpAddNpmPayload(
+  input: LocalMcpAddNpmInput,
   deps: {
     npmRunner?: NpmRunner;
+    operationStore?: OperationStore;
   } = {},
 ): Record<string, unknown> {
-  const parsed = mcpAddNpmInputObject.parse(input);
+  const parsed = localMcpAddNpmInputObject.parse(input);
   const workspace = resolveWorkspaceRoot(process.cwd());
   const packageName = parseRegistryPackageName(parsed.packageSpec);
   if (packageName === null) throw new Error(`Unsupported npm package spec: ${parsed.packageSpec}`);
@@ -385,65 +388,120 @@ export function buildMcpAddNpmPayload(
     };
   }
 
-  if (packageJsonCurrent === null) {
-    assertWorkspacePath(workspace, packageJsonPath);
-    writeFileSync(packageJsonPath, packageJsonNext, 'utf8');
-  }
-
-  assertWorkspacePath(workspace, workspacePath(workspace, 'node_modules'));
-  const runner = deps.npmRunner ?? runNpm;
-  const npmResult = runner(installArgs, { cwd: workspace });
-  if (npmResult.error !== undefined || npmResult.status !== 0) {
-    const reason = (npmResult.error?.message ?? npmResult.stderr.trim()) || 'unknown error';
-    throw new Error(`npm install failed for ${parsed.packageSpec}: ${reason}`);
-  }
-
-  const packageInfo = resolveInstalledPackage({
-    workspace,
-    packageName,
-    entrypoint: parsed.entrypoint,
-  });
-  const lifecycleScriptsSuppressed = packageInfo.lifecycleScripts.length > 0 && !allowScripts;
-
-  const configNext = upsertMcpAddConfig(
-    configCurrent,
-    serverName,
-    mcpServerBlock({
+  const store = deps.operationStore ?? new OperationStore({ workspace });
+  const operation = store.create({
+    kind: 'local_mcp_add_npm',
+    status: 'running',
+    evidence: {
+      scope: 'local',
+      packageSpec: parsed.packageSpec,
+      packageName,
       serverName,
-      packageName: packageInfo.packageName,
-      entrypoint: packageInfo.entrypoint,
-      extraArgs,
       envVars,
-    }),
-  );
-  actions.push(actionForFile(configPath, configCurrent, configNext, workspace, 'register project-scoped Codex MCP server'));
-  if (configCurrent !== configNext) {
-    assertWorkspacePath(workspace, configPath);
-    mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, configNext, 'utf8');
-  }
-
-  return {
-    ok: true,
-    dryRun: false,
-    confirmRequired: false,
-    workspace: '<workspace>',
-    packageSpec: parsed.packageSpec,
-    packageName,
-    serverName,
-    envVars,
-    lifecycleScriptsAllowed: allowScripts,
-    packageLifecycleScripts: packageInfo.lifecycleScripts,
-    lifecycleScriptsSuppressed,
-    command: 'node',
-    args: [`node_modules/${packageInfo.packageName}/${packageInfo.entrypoint}`, ...extraArgs],
-    actions,
-    npm: {
-      status: npmResult.status,
-      stdoutIncluded: npmResult.stdout.length > 0,
-      stderrIncluded: npmResult.stderr.length > 0,
+      lifecycleScriptsAllowed: allowScripts,
     },
-    warnings: warningsFor({ envVars, lifecycleScriptsSuppressed }),
-    nextAction: nextActionFor({ serverName, envVars, dryRun: false }),
-  };
+    nextAction: 'Install npm package and update project MCP config.',
+  });
+
+  try {
+    if (packageJsonCurrent === null) {
+      assertWorkspacePath(workspace, packageJsonPath);
+      writeFileSync(packageJsonPath, packageJsonNext, 'utf8');
+    }
+
+    assertWorkspacePath(workspace, workspacePath(workspace, 'node_modules'));
+    const runner = deps.npmRunner ?? runNpm;
+    const npmResult = runner(installArgs, { cwd: workspace });
+    if (npmResult.error !== undefined || npmResult.status !== 0) {
+      const reason = (npmResult.error?.message ?? npmResult.stderr.trim()) || 'unknown error';
+      throw userError({
+        code: 'npm_install_failed',
+        message: `npm install failed for ${parsed.packageSpec}: ${reason}`,
+        parameter: 'packageSpec',
+        received: parsed.packageSpec,
+        expected: 'An installable npm registry package spec and a working npm environment.',
+        examples: ['codex-agent-session-manager mcp local add npm @modelcontextprotocol/server-everything --dry-run'],
+        suggestions: [
+          { label: 'Validate the package name', command: `npm view ${parsed.packageSpec} version` },
+          { label: 'Retry as dry-run first', command: `codex-agent-session-manager mcp local add npm ${parsed.packageSpec} --dry-run` },
+          { label: 'Review lifecycle scripts before enabling them', details: 'Use allowScripts:true only after reviewing the package if generated/native assets are required.' },
+        ],
+        nextAction: 'Fix the npm/package failure, then retry with dryRun:false and confirm:true. Keep secrets out of npm args and project files.',
+      });
+    }
+
+    const packageInfo = resolveInstalledPackage({
+      workspace,
+      packageName,
+      entrypoint: parsed.entrypoint,
+    });
+    const lifecycleScriptsSuppressed = packageInfo.lifecycleScripts.length > 0 && !allowScripts;
+
+    const configNext = upsertMcpAddConfig(
+      configCurrent,
+      serverName,
+      mcpServerBlock({
+        serverName,
+        packageName: packageInfo.packageName,
+        entrypoint: packageInfo.entrypoint,
+        extraArgs,
+        envVars,
+      }),
+    );
+    actions.push(actionForFile(configPath, configCurrent, configNext, workspace, 'register project-scoped Codex MCP server'));
+    if (configCurrent !== configNext) {
+      assertWorkspacePath(workspace, configPath);
+      mkdirSync(dirname(configPath), { recursive: true });
+      writeFileSync(configPath, configNext, 'utf8');
+    }
+
+    const payload = {
+      ok: true,
+      dryRun: false,
+      confirmRequired: false,
+      operationId: operation.id,
+      workspace: '<workspace>',
+      packageSpec: parsed.packageSpec,
+      packageName,
+      serverName,
+      envVars,
+      lifecycleScriptsAllowed: allowScripts,
+      packageLifecycleScripts: packageInfo.lifecycleScripts,
+      lifecycleScriptsSuppressed,
+      command: 'node',
+      args: [`node_modules/${packageInfo.packageName}/${packageInfo.entrypoint}`, ...extraArgs],
+      actions,
+      npm: {
+        status: npmResult.status,
+        stdoutIncluded: npmResult.stdout.length > 0,
+        stderrIncluded: npmResult.stderr.length > 0,
+      },
+      warnings: warningsFor({ envVars, lifecycleScriptsSuppressed }),
+      nextAction: nextActionFor({ serverName, envVars, dryRun: false }),
+    };
+    store.complete(operation.id, {
+      evidence: {
+        scope: 'local',
+        packageName,
+        serverName,
+        configChanged: configCurrent !== configNext,
+        actions,
+      },
+      nextAction: payload.nextAction,
+    });
+    return payload;
+  } catch (error) {
+    store.fail(operation.id, {
+      failure: error instanceof Error ? { message: error.message } : { message: String(error) },
+      evidence: {
+        scope: 'local',
+        packageSpec: parsed.packageSpec,
+        packageName,
+        serverName,
+        actions,
+      },
+      nextAction: 'Fix the failed local MCP add operation, then retry with dryRun:false and confirm:true.',
+    });
+    throw error;
+  }
 }

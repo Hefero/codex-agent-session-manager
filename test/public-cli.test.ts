@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { isUserFacingError } from '../src/errors.js';
 import { parsePublicCommand, runPublicCommand } from '../src/public-cli.js';
 import { OperationStore } from '../src/tools/operations.js';
 
@@ -42,6 +43,15 @@ test('parsePublicCommand maps app-server lifecycle commands', () => {
     },
   });
 
+  assert.deepEqual(parsePublicCommand(['app-server', 'start', '--port', '4566', '--', '--config', 'model="gpt-5"', '--enable', 'js_repl']), {
+    command: 'app-server',
+    subcommand: 'start',
+    input: {
+      port: '4566',
+      appServerArgs: ['--config', 'model="gpt-5"', '--enable', 'js_repl'],
+    },
+  });
+
   assert.deepEqual(parsePublicCommand(['app-server', 'status', '--no-probe-ready', '--no-process-tree']), {
     command: 'app-server',
     subcommand: 'status',
@@ -67,6 +77,28 @@ test('parsePublicCommand maps app-server lifecycle commands', () => {
       confirm: true,
       dryRun: false,
       delayMs: 0,
+    },
+  });
+
+  assert.deepEqual(parsePublicCommand(['stop', '--force', '--confirm']), {
+    command: 'app-server',
+    subcommand: 'stop',
+    input: {
+      force: true,
+      useStateUrl: true,
+      confirm: true,
+      dryRun: false,
+    },
+  });
+
+  assert.deepEqual(parsePublicCommand(['app-server', 'stop', '--url', 'ws://127.0.0.1:60998', '--force', '--confirm']), {
+    command: 'app-server',
+    subcommand: 'stop',
+    input: {
+      appServerUrl: 'ws://127.0.0.1:60998',
+      force: true,
+      confirm: true,
+      dryRun: false,
     },
   });
 });
@@ -100,10 +132,11 @@ test('parsePublicCommand maps mcp refresh with repeated highlight tools', () => 
   );
 });
 
-test('parsePublicCommand maps mcp add npm', () => {
+test('parsePublicCommand maps local mcp add npm', () => {
   assert.deepEqual(
     parsePublicCommand([
       'mcp',
+      'local',
       'add',
       'npm',
       '@modelcontextprotocol/server-everything',
@@ -116,7 +149,7 @@ test('parsePublicCommand maps mcp add npm', () => {
     ]),
     {
       command: 'mcp',
-      subcommand: 'add-npm',
+      subcommand: 'local-add-npm',
       input: {
         packageSpec: '@modelcontextprotocol/server-everything',
         serverName: 'everything',
@@ -128,10 +161,11 @@ test('parsePublicCommand maps mcp add npm', () => {
   );
 });
 
-test('parsePublicCommand maps mcp add npm env vars and empty extra args', () => {
+test('parsePublicCommand maps local mcp add npm env vars and empty extra args', () => {
   assert.deepEqual(
     parsePublicCommand([
       'mcp',
+      'local',
       'add',
       'npm',
       'example-search-mcp@latest',
@@ -144,7 +178,7 @@ test('parsePublicCommand maps mcp add npm env vars and empty extra args', () => 
     ]),
     {
       command: 'mcp',
-      subcommand: 'add-npm',
+      subcommand: 'local-add-npm',
       input: {
         packageSpec: 'example-search-mcp@latest',
         serverName: 'search_mcp',
@@ -156,8 +190,101 @@ test('parsePublicCommand maps mcp add npm env vars and empty extra args', () => 
   );
 
   assert.throws(
-    () => parsePublicCommand(['mcp', 'add', 'npm', 'example-search-mcp', '--arg', 'stdio', '--no-default-stdio-arg']),
+    () => parsePublicCommand(['mcp', 'local', 'add', 'npm', 'example-search-mcp', '--arg', 'stdio', '--no-default-stdio-arg']),
     /either --arg or --no-default-stdio-arg/u,
+  );
+});
+
+test('parsePublicCommand maps local mcp remove', () => {
+  assert.deepEqual(
+    parsePublicCommand(['mcp', 'local', 'remove', 'everything', '--uninstall-package', '--confirm']),
+    {
+      command: 'mcp',
+      subcommand: 'local-remove',
+      input: {
+        serverName: 'everything',
+        uninstallPackage: true,
+        confirm: true,
+        dryRun: false,
+      },
+    },
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'local', 'remove']),
+    /mcp local remove requires a server name/u,
+  );
+});
+
+test('parsePublicCommand maps global mcp add and remove', () => {
+  assert.deepEqual(
+    parsePublicCommand([
+      'mcp',
+      'global',
+      'add',
+      'npm',
+      'example-search-mcp@latest',
+      '--server-name',
+      'search_mcp',
+      '--env-var',
+      'SEARCH_API_KEY',
+      '--config',
+      'global-config.toml',
+      '--state-dir',
+      'global-state',
+      '--no-default-stdio-arg',
+      '--dry-run',
+    ]),
+    {
+      command: 'mcp',
+      subcommand: 'global-add-npm',
+      input: {
+        packageSpec: 'example-search-mcp@latest',
+        serverName: 'search_mcp',
+        extraArgs: [],
+        envVars: ['SEARCH_API_KEY'],
+        configPath: 'global-config.toml',
+        stateDir: 'global-state',
+        dryRun: true,
+      },
+    },
+  );
+
+  assert.deepEqual(
+    parsePublicCommand(['mcp', 'global', 'remove', 'search_mcp', '--uninstall-package', '--config', 'global-config.toml', '--state-dir', 'global-state', '--confirm']),
+    {
+      command: 'mcp',
+      subcommand: 'global-remove',
+      input: {
+        serverName: 'search_mcp',
+        uninstallPackage: true,
+        configPath: 'global-config.toml',
+        stateDir: 'global-state',
+        confirm: true,
+        dryRun: false,
+      },
+    },
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'global', 'remove']),
+    /mcp global remove requires a server name/u,
+  );
+});
+
+test('parsePublicCommand maps mcp report', () => {
+  assert.deepEqual(
+    parsePublicCommand(['mcp', 'report', '--no-global', '--no-operations', '--global-config', 'config.toml', '--global-state-dir', 'state']),
+    {
+      command: 'mcp',
+      subcommand: 'report',
+      input: {
+        includeGlobal: false,
+        includeOperations: false,
+        globalConfigPath: 'config.toml',
+        globalStateDir: 'state',
+      },
+    },
   );
 });
 
@@ -225,13 +352,18 @@ test('parsePublicCommand rejects ignored public CLI flags and extra positionals'
   );
 
   assert.throws(
-    () => parsePublicCommand(['mcp', 'add', 'npm', 'example-search-mcp', 'extra']),
-    /Unexpected argument for mcp add npm: extra/u,
+    () => parsePublicCommand(['mcp', 'local', 'add', 'npm', 'example-search-mcp', 'extra']),
+    /Unexpected argument for mcp local add npm: extra/u,
   );
 
   assert.throws(
     () => parsePublicCommand(['session', 'launch', 'extra', '--dry-run']),
     /Unexpected argument for session launch: extra/u,
+  );
+
+  assert.throws(
+    () => parsePublicCommand(['session', 'launch', '--', '--config', 'model="gpt-5"']),
+    /Unexpected native passthrough argument for session/u,
   );
 
   assert.throws(
@@ -377,5 +509,18 @@ test('runPublicCommand reports missing required thread id', async () => {
   await assert.rejects(
     () => runPublicCommand(['session', 'close', '--url', 'ws://127.0.0.1:4566']),
     /--thread-id is required/u,
+  );
+});
+
+test('parsePublicCommand exposes agent-friendly error metadata', () => {
+  assert.throws(
+    () => parsePublicCommand(['mcp', 'local', 'add', 'file', './server.tgz']),
+    (error: unknown) => {
+      assert.equal(isUserFacingError(error), true);
+      assert.equal((error as { code?: string }).code, 'unknown_mcp_provider');
+      assert.equal((error as { parameter?: string }).parameter, 'provider');
+      assert.match((error as Error).message, /Unknown mcp local add provider/u);
+      return true;
+    },
   );
 });

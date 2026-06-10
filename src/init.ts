@@ -12,8 +12,6 @@ import { packageName, packageVersion } from './version.js';
 const MCP_SERVER_NAME = 'codex_agent_session_manager';
 const TOML_MARKER_START = '# BEGIN codex-agent-session-manager';
 const TOML_MARKER_END = '# END codex-agent-session-manager';
-const AGENTS_MARKER_START = '<!-- codex-agent-session-manager:start -->';
-const AGENTS_MARKER_END = '<!-- codex-agent-session-manager:end -->';
 const LOCAL_PACKAGE_CLI = `node_modules/${packageName}/dist/cli.js`;
 const SHELL_CODEX_POWERSHELL_SCRIPT = `${PRIMARY_STATE_DIR_NAME}/shell/codex.ps1`;
 const SHELL_CODEX_POSIX_SCRIPT = `${PRIMARY_STATE_DIR_NAME}/shell/codex.mjs`;
@@ -34,12 +32,13 @@ type InitActionKind = 'create' | 'update' | 'noop' | 'skip' | 'run';
 
 interface ParsedInitArgs {
   workspace?: string;
+  packageSpec?: string;
   dryRun?: boolean;
-  agents?: boolean;
   json?: boolean;
   installShellHook?: boolean;
   shellHookShell?: 'powershell' | 'bash' | 'zsh';
   shellHookProfile?: string;
+  shellHookWslPreferLinuxPath?: boolean;
   help?: boolean;
 }
 
@@ -81,14 +80,19 @@ function usage(): string {
 
 Options:
   --workspace <path>   Target workspace. Defaults to current directory.
+  --package-spec <spec>
+                       Package spec to install as the project devDependency.
+                       Defaults to ${packageName}@${packageVersion}.
   --dry-run            Print the init plan without changing files.
   --json               Print machine-readable JSON output.
-  --no-agents          Do not create or update AGENTS.md.
   --install-shell-hook Install/update the opt-in codex shell function hook.
   --shell-hook-shell <name>
                        Shell hook type: powershell, bash, zsh, or auto.
   --shell-hook-profile <path>
                        Shell profile path for --install-shell-hook.
+  --shell-hook-wsl-prefer-linux-path
+                       For bash/zsh in WSL, prefer Linux npm binaries and
+                       refuse /mnt/c Windows shims in the shell hook.
   --help               Show this help.
 `;
 }
@@ -98,7 +102,7 @@ export function initUsage(): string {
 }
 
 export function parseInitArgs(argv: readonly string[]): ParsedInitArgs {
-  const options: ParsedInitArgs = { agents: true };
+  const options: ParsedInitArgs = {};
 
   for (let index = 0; index < argv.length; index += 1) {
     const rawArg = argv[index] ?? '';
@@ -120,14 +124,14 @@ export function parseInitArgs(argv: readonly string[]): ParsedInitArgs {
       case '--workspace':
         options.workspace = readValue();
         break;
+      case '--package-spec':
+        options.packageSpec = readValue();
+        break;
       case '--dry-run':
         options.dryRun = true;
         break;
       case '--json':
         options.json = true;
-        break;
-      case '--no-agents':
-        options.agents = false;
         break;
       case '--install-shell-hook':
         options.installShellHook = true;
@@ -145,6 +149,9 @@ export function parseInitArgs(argv: readonly string[]): ParsedInitArgs {
       case '--shell-hook-profile':
         options.shellHookProfile = readValue();
         break;
+      case '--shell-hook-wsl-prefer-linux-path':
+        options.shellHookWslPreferLinuxPath = true;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -159,6 +166,9 @@ export function parseInitArgs(argv: readonly string[]): ParsedInitArgs {
   }
   if (options.shellHookShell !== undefined && options.installShellHook !== true) {
     throw new Error('--shell-hook-shell requires --install-shell-hook.');
+  }
+  if (options.shellHookWslPreferLinuxPath === true && options.installShellHook !== true) {
+    throw new Error('--shell-hook-wsl-prefer-linux-path requires --install-shell-hook.');
   }
 
   return options;
@@ -283,7 +293,15 @@ function minimalPackageJson(workspace: string): string {
   }, null, 2)}\n`;
 }
 
-function packageJsonContent(content: string | null, workspace: string): string {
+function defaultInitPackageSpec(): string {
+  return `${packageName}@${packageVersion}`;
+}
+
+function dependencySpecForPackageJson(packageSpec: string): string {
+  return packageSpec === defaultInitPackageSpec() ? packageVersion : packageSpec;
+}
+
+function packageJsonContent(content: string | null, workspace: string, packageSpec = defaultInitPackageSpec()): string {
   const source = content ?? minimalPackageJson(workspace);
 
   const parsed = JSON.parse(stripBom(source)) as unknown;
@@ -296,17 +314,22 @@ function packageJsonContent(content: string | null, workspace: string): string {
     'codex:remote': `${packageName} remote`,
     'codex:remote:dry-run': `${packageName} remote --dry-run --no-resume`,
     'codex:app-server:status': `${packageName} app-server status`,
-    'codex:app-server:stop': `${packageName} app-server stop --dry-run`,
+    'codex:app-server:stop': `${packageName} app-server stop --confirm`,
+    'codex:app-server:stop:dry-run': `${packageName} app-server stop --dry-run`,
   };
   for (const [name, command] of Object.entries(wantedScripts)) {
     if (scripts[name] === undefined) scripts[name] = command;
   }
   parsed.scripts = scripts;
 
-  const dependencies = recordFrom(parsed.dependencies);
+  const dependencies = { ...recordFrom(parsed.dependencies) };
   const devDependencies = { ...recordFrom(parsed.devDependencies) };
-  if (dependencies[packageName] === undefined && devDependencies[packageName] === undefined) {
-    devDependencies[packageName] = packageVersion;
+  const dependencySpec = dependencySpecForPackageJson(packageSpec);
+  if (dependencies[packageName] !== undefined) {
+    dependencies[packageName] = dependencySpec;
+    parsed.dependencies = dependencies;
+  } else {
+    devDependencies[packageName] = dependencySpec;
   }
   if (Object.keys(devDependencies).length > 0) {
     parsed.devDependencies = devDependencies;
@@ -315,11 +338,19 @@ function packageJsonContent(content: string | null, workspace: string): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-function installedLocalPackageExists(workspace: string): boolean {
-  return existsSync(workspacePath(workspace, 'node_modules', packageName, 'dist', 'cli.js'));
+function installedLocalPackageSatisfies(workspace: string, packageSpec: string, explicitPackageSpec: boolean): boolean {
+  if (!existsSync(workspacePath(workspace, 'node_modules', packageName, 'dist', 'cli.js'))) return false;
+  if (explicitPackageSpec) return false;
+
+  try {
+    const packageJson = JSON.parse(readFileSync(workspacePath(workspace, 'node_modules', packageName, 'package.json'), 'utf8')) as unknown;
+    return isRecord(packageJson) && packageJson.version === packageVersion && packageSpec === defaultInitPackageSpec();
+  } catch {
+    return false;
+  }
 }
 
-function npmInstallArgs(): string[] {
+function npmInstallArgs(packageSpec = defaultInitPackageSpec()): string[] {
   return [
     'install',
     '--save-dev',
@@ -328,7 +359,7 @@ function npmInstallArgs(): string[] {
     '--no-fund',
     '--cache',
     './.npm-cache',
-    `${packageName}@${packageVersion}`,
+    packageSpec,
   ];
 }
 
@@ -338,70 +369,6 @@ function npmCommandForDisplay(args: readonly string[]): string[] {
 
 function runNpmInstall(input: { workspace: string; args: string[] }): NpmRunResult {
   return runNpm(input.args, { cwd: input.workspace });
-}
-
-function agentsBlock(): string {
-  return `${AGENTS_MARKER_START}
-## Codex Agent Session Manager
-
-This project uses \`${packageName}\` for Codex App Server session control and
-MCP callable-catalog validation.
-
-Useful commands:
-
-- \`npm run codex:init\`
-- \`npm run codex:init:dry-run\`
-- \`npm run codex:remote\`
-- \`npm run codex:remote:dry-run\`
-- \`${packageName} mcp add npm <package-spec> --dry-run\`
-- \`${packageName} mcp add npm <package-spec> --confirm\`
-- \`${packageName} mcp add npm <package-spec> --env-var <NAME> --confirm\`
-  for env/auth MCPs; this forwards env var names without storing values in
-  project config.
-- \`${packageName} mcp refresh --thread-id <thread-id>\`
-
-For OAuth, PII, write-capable, or destructive MCPs:
-
-- Prefer \`${packageName} mcp add npm ...\` over raw \`npm\` commands. On
-  Windows PowerShell, raw \`npm\` can hit \`npm.ps1\` execution policy or a
-  user-global npm cache outside the workspace; if raw npm is unavoidable, use
-  \`npm.cmd\` and a workspace-local cache such as \`--cache ./.npm-cache\`.
-- Prefer read-only scopes first. Escalate to read/write or delete scopes only
-  after explicit operator approval.
-- Do not patch files under \`node_modules\`. If an MCP package needs different
-  behavior, create a project-local wrapper or a dedicated package.
-- Do not validate by launching stdio MCP entrypoints in a visible terminal.
-  Stdio MCP servers are long-lived and can leave orphan node/cmd windows.
-  Prefer App Server refresh plus a real model-callable tool call.
-- Keep OAuth client files, tokens, and API keys outside the workspace or under
-  ignored paths such as \`.secrets/\`. Do not print sensitive values.
-- If env vars were created or changed after App Server started, restart or
-  relaunch the managed App Server before refresh, or use a reviewed local
-  wrapper that reads the intended user-scoped config.
-
-Treat App Server MCP status as diagnostic. Validate MCP changes with a real
-tool call from the continuation or replacement turn. Once the target MCP tool
-call succeeds from the model-callable catalog, stop validation and report the
-result; do not keep probing or fall back to direct MCP SDK calls. If a changed
-MCP is not callable yet, keep using \`${packageName} mcp refresh --thread-id <thread-id>\`
-or session replacement until a fresh turn proves the call. Direct MCP SDK calls
-are diagnostic only; they do not prove the model-callable catalog refreshed.
-When scheduling a continuation for the current thread, do not call
-\`codex_operation_wait\` or \`codex_operation_read\` from that same active turn.
-End the current turn so the background child can observe the target thread as
-idle and start the continuation.
-${AGENTS_MARKER_END}`;
-}
-
-function agentsContent(content: string | null): string {
-  const block = agentsBlock();
-  if (content === null || content.trim().length === 0) {
-    return ensureTrailingNewline(`# Project Agent Notes\n\n${block}`);
-  }
-
-  const marked = replaceMarkedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END, block);
-  if (marked !== null) return marked;
-  return appendBlock(content, block);
 }
 
 function shellCodexScriptContent(): string {
@@ -481,56 +448,70 @@ function Resolve-CodexRealCli {
 function Should-DelegateToRealCodex {
   param([object[]] $InputArgs)
 
-  $raw = @($InputArgs | ForEach-Object { [string] $_ })
+  $raw = @(Convert-CodexInputArgsToRaw $InputArgs)
   if ($raw.Count -eq 0) {
+    return $false
+  }
+  if ($raw.Count -eq 1 -and @('--help', '-h', '--version', '-V', 'help', 'version') -contains $raw[0]) {
+    return $true
+  }
+  if ($raw[0].StartsWith('-')) {
     return $false
   }
   if ($raw[0] -eq 'resume') {
     return $false
   }
-  if ($raw.Count -eq 1 -and -not $raw[0].StartsWith('-')) {
-    return $false
+  return Test-CodexNativeSubcommand $raw[0]
+}
+
+function Convert-CodexInputArgsToRaw {
+  param([object[]] $InputArgs)
+
+  $raw = @()
+  foreach ($arg in @($InputArgs)) {
+    if ($null -eq $arg) {
+      continue
+    }
+    $text = [string] $arg
+    if ($text.Length -eq 0) {
+      continue
+    }
+    $raw += $text
   }
-  return $true
+  return $raw
+}
+
+function Test-CodexManagerOnlyArg {
+  param([string] $Arg)
+
+  return @('--no-bypass-sandbox', '--enable-image-generation', '--no-resume', '--dry-run', '--resume-last', '--pick') -contains $Arg
+}
+
+function Test-CodexNativeSubcommand {
+  param([string] $Arg)
+
+  return @('exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'mcp-server', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'archive', 'unarchive', 'fork', 'cloud', 'exec-server', 'features') -contains $Arg
 }
 
 function Convert-CodexArgsToManagedRemoteArgs {
   param([object[]] $InputArgs)
 
-  $raw = @($InputArgs | ForEach-Object { [string] $_ })
-  $remoteArgs = @('--workspace', $workspace)
-
-  if ($raw.Count -eq 0) {
-    return $remoteArgs
-  }
-
-  if ($raw[0] -eq 'resume') {
-    if ($raw.Count -ge 2 -and $raw[1] -eq '--last') {
-      $remoteArgs += '--resume-last'
-      if ($raw.Count -gt 2) {
-        $remoteArgs += @('--prompt', ($raw[2..($raw.Count - 1)] -join ' '))
-      }
-      return $remoteArgs
+  $raw = @(Convert-CodexInputArgsToRaw $InputArgs)
+  $managerArgs = @()
+  $codexArgs = @()
+  foreach ($arg in @($raw)) {
+    if (Test-CodexManagerOnlyArg $arg) {
+      $managerArgs += $arg
+    } else {
+      $codexArgs += $arg
     }
-
-    if ($raw.Count -ge 2 -and -not $raw[1].StartsWith('-')) {
-      $remoteArgs += @('--resume', $raw[1])
-      if ($raw.Count -gt 2) {
-        $remoteArgs += @('--prompt', ($raw[2..($raw.Count - 1)] -join ' '))
-      }
-      return $remoteArgs
-    }
-
-    $remoteArgs += '--pick'
-    return $remoteArgs
   }
 
-  if ($raw.Count -eq 1 -and -not $raw[0].StartsWith('-')) {
-    $remoteArgs += @('--prompt', $raw[0])
+  $remoteArgs = @('--workspace', $workspace) + @($managerArgs)
+  if ($codexArgs.Count -eq 0) {
     return $remoteArgs
   }
-
-  return @($remoteArgs + $raw)
+  return @($remoteArgs + @('--') + $codexArgs)
 }
 
 function Convert-ShellResumeStateToManagedRemoteArgs {
@@ -647,44 +628,34 @@ function resolveManagerCli() {
   throw new Error('Could not find a codex-agent-session-manager CLI that supports managed shell prompts. Re-run init with the upgraded package or update the project-local devDependency.');
 }
 
-function promptFromRest(values, startIndex) {
-  return values.slice(startIndex).join(' ');
-}
-
 function shouldDelegateToRealCodex(raw) {
   if (raw.length === 0) return false;
+  if (raw.length === 1 && ['--help', '-h', '--version', '-V', 'help', 'version'].includes(raw[0])) return true;
+  if (raw[0].startsWith('-')) return false;
   if (raw[0] === 'resume') return false;
-  if (raw.length === 1 && !raw[0].startsWith('-')) return false;
-  return true;
+  return isCodexNativeSubcommand(raw[0]);
+}
+
+function isCodexManagerOnlyArg(arg) {
+  return ['--no-bypass-sandbox', '--enable-image-generation', '--no-resume', '--dry-run', '--resume-last', '--pick'].includes(arg);
+}
+
+function isCodexNativeSubcommand(arg) {
+  return ['exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'mcp-server', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'archive', 'unarchive', 'fork', 'cloud', 'exec-server', 'features'].includes(arg);
 }
 
 function convertCodexArgsToManagedRemoteArgs(raw) {
-  const remoteArgs = ['--workspace', workspace];
-  if (raw.length === 0) return remoteArgs;
-
-  if (raw[0] === 'resume') {
-    if (raw.length >= 2 && raw[1] === '--last') {
-      remoteArgs.push('--resume-last');
-      if (raw.length > 2) remoteArgs.push('--prompt', promptFromRest(raw, 2));
-      return remoteArgs;
+  const managerArgs = [];
+  const codexArgs = [];
+  for (const arg of raw) {
+    if (isCodexManagerOnlyArg(arg)) {
+      managerArgs.push(arg);
+    } else {
+      codexArgs.push(arg);
     }
-
-    if (raw.length >= 2 && !raw[1].startsWith('-')) {
-      remoteArgs.push('--resume', raw[1]);
-      if (raw.length > 2) remoteArgs.push('--prompt', promptFromRest(raw, 2));
-      return remoteArgs;
-    }
-
-    remoteArgs.push('--pick');
-    return remoteArgs;
   }
-
-  if (raw.length === 1 && !raw[0].startsWith('-')) {
-    remoteArgs.push('--prompt', raw[0]);
-    return remoteArgs;
-  }
-
-  return [...remoteArgs, ...raw];
+  const remoteArgs = ['--workspace', workspace, ...managerArgs];
+  return codexArgs.length === 0 ? remoteArgs : [...remoteArgs, '--', ...codexArgs];
 }
 
 function resolveRealCodexCli() {
@@ -778,6 +749,8 @@ function maybeAddFileUpdate(plan: InitPlan, path: string, current: string | null
 export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
   const workspace = resolveWorkspaceRoot(options.workspace ?? process.cwd());
   const dryRun = options.dryRun === true;
+  const packageSpec = options.packageSpec ?? defaultInitPackageSpec();
+  const explicitPackageSpec = options.packageSpec !== undefined;
   const windowsHiddenLauncherPath = prepareWindowsHiddenLauncherForWorkspace(workspace, true);
   const plan: InitPlan = {
     ok: true,
@@ -793,7 +766,7 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
   const codexConfigCurrent = readTextIfExists(codexConfigPath);
   const packageJsonPath = workspacePath(workspace, 'package.json');
   const packageCurrent = readTextIfExists(packageJsonPath);
-  const packageNext = packageJsonContent(packageCurrent, workspace);
+  const packageNext = packageJsonContent(packageCurrent, workspace, packageSpec);
   maybeAddFileUpdate(
     plan,
     codexConfigPath,
@@ -834,28 +807,14 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     'add local POSIX codex supervisor script',
   );
 
-  if (!installedLocalPackageExists(workspace)) {
-    const args = npmInstallArgs();
+  if (!installedLocalPackageSatisfies(workspace, packageSpec, explicitPackageSpec)) {
+    const args = npmInstallArgs(packageSpec);
     plan.actions.push({
       kind: 'run',
       target: workspace,
-      reason: 'install codex-agent-session-manager as a project devDependency',
+      reason: 'install/update codex-agent-session-manager as a project devDependency',
       command: npmCommandForDisplay(args),
     });
-  }
-
-  const agentsPath = workspacePath(workspace, 'AGENTS.md');
-  if (options.agents === false) {
-    plan.actions.push({ kind: 'skip', target: agentsPath, reason: 'disabled by --no-agents' });
-  } else {
-    const agentsCurrent = readTextIfExists(agentsPath);
-    maybeAddFileUpdate(
-      plan,
-      agentsPath,
-      agentsCurrent,
-      agentsContent(agentsCurrent),
-      'add agent operating notes',
-    );
   }
 
   if (plan.windowsHiddenLauncherPath !== null) {
@@ -876,6 +835,9 @@ export function buildInitPlan(options: ParsedInitArgs = {}): InitPlan {
     }
     if (options.shellHookProfile !== undefined) {
       shellHookInput.profile = options.shellHookProfile;
+    }
+    if (options.shellHookWslPreferLinuxPath === true) {
+      shellHookInput.wslPreferLinuxPath = true;
     }
     const shellHookPlan = buildShellHookPlan(shellHookInput);
     plan.shellHookPlan = shellHookPlan;

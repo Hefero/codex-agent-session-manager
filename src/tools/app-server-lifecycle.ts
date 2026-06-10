@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { appServerStateFileForWorkspace, readAppServerStateFile, writeAppServerState, type AppServerState } from '../app-server/state.js';
 import {
   collectProcessTree,
+  commandLineTokens,
   listProcesses,
+  normalizeAppServerUrl,
   pathsMatch,
   stopProcessTree,
   summarizeProcesses,
@@ -33,6 +35,8 @@ export const appServerStatusInputSchema = {
 export const appServerStopInputSchema = {
   dryRun: z.boolean().optional().describe('Defaults true. When true, only reports the managed App Server stop target.'),
   confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
+  appServerUrl: z.string().optional().describe('Optional loopback App Server websocket URL to stop with force:true. Intended for reused App Servers not owned by workspace launcher state.'),
+  force: z.boolean().optional().describe('Required with appServerUrl for real stops of App Servers not marked owned by this workspace.'),
   timeoutMs: z.number().int().min(0).max(MAX_TIMEOUT_MS).optional().describe('Maximum wait time for the managed App Server process tree to stop.'),
   delayMs: z.number().int().min(0).max(MAX_DELAY_MS).optional().describe('Delay before the detached child stops the managed App Server process tree.'),
 };
@@ -41,13 +45,16 @@ const appServerStatusInputObject = z.object(appServerStatusInputSchema);
 const appServerStopInputObject = z.object(appServerStopInputSchema);
 
 type AppServerStatusInput = z.infer<typeof appServerStatusInputObject>;
-type AppServerStopInput = z.infer<typeof appServerStopInputObject>;
+type AppServerStopInput = z.infer<typeof appServerStopInputObject> & {
+  useStateUrl?: boolean;
+};
 
 export interface AppServerStopOperationInput {
   operationId: string;
   workspace: string;
   expectedPid: number;
   expectedAppServerUrl: string;
+  forceByUrl?: boolean;
   timeoutMs?: number;
   delayMs?: number;
 }
@@ -83,6 +90,16 @@ interface ManagedAppServerTarget {
   stateStatus: string | null;
   processAlive: boolean;
   processTree: ProcessEntry[];
+  canStop: boolean;
+  stopReason: string;
+}
+
+interface AppServerUrlTarget {
+  url: string;
+  pid: number | null;
+  processTree: ProcessEntry[];
+  matchCount: number;
+  rootCount: number;
   canStop: boolean;
   stopReason: string;
 }
@@ -175,6 +192,85 @@ function managedAppServerTarget(input: {
   return target;
 }
 
+function basenameToken(token: unknown): string {
+  return String(token ?? '')
+    .replace(/^["']+|["']+$/gu, '')
+    .replace(/\\/gu, '/')
+    .split('/')
+    .filter(Boolean)
+    .at(-1) ?? '';
+}
+
+function tokenOptionValue(tokens: readonly string[], names: readonly string[]): string | null {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) continue;
+    for (const name of names) {
+      if (token === name) return tokens[index + 1] ?? null;
+      if (token.startsWith(`${name}=`)) return token.slice(name.length + 1);
+    }
+  }
+  return null;
+}
+
+function tokensInclude(tokens: readonly string[], expected: string): boolean {
+  return tokens.some((token) => token === expected);
+}
+
+function isCodexLikeAppServerProcess(entry: ProcessEntry, tokens: readonly string[]): boolean {
+  const hasCodexBinary = /^codex(?:\.(?:cmd|exe|js))?$/iu.test(basenameToken(entry.name))
+    || tokens.some((token) => /^codex(?:\.(?:cmd|exe|js))?$/iu.test(basenameToken(token)));
+  return hasCodexBinary && tokensInclude(tokens, 'app-server');
+}
+
+function appServerListenUrlFromProcess(entry: ProcessEntry): string | null {
+  const tokens = commandLineTokens(entry.commandLine);
+  if (!isCodexLikeAppServerProcess(entry, tokens)) return null;
+  return normalizeAppServerUrl(tokenOptionValue(tokens, ['--listen']));
+}
+
+function processListensOnAppServerUrl(entry: ProcessEntry, appServerUrl: string): boolean {
+  return appServerListenUrlFromProcess(entry) === normalizeAppServerUrl(appServerUrl);
+}
+
+function appServerUrlTarget(input: {
+  appServerUrl: string;
+  processes: readonly ProcessEntry[];
+}): AppServerUrlTarget {
+  const url = validateAppServerUrl(input.appServerUrl, 'Forced App Server stop URL').href;
+  const matches = input.processes.filter((entry) => processListensOnAppServerUrl(entry, url));
+  const matchPids = new Set(matches.map((entry) => entry.pid));
+  const roots = matches.filter((entry) => entry.parentPid === null || !matchPids.has(entry.parentPid));
+
+  let pid: number | null = null;
+  let processTree: ProcessEntry[] = [];
+  let canStop = false;
+  let stopReason = 'No running Codex App Server process was found for the requested URL.';
+
+  if (matches.length > 0 && roots.length === 0) {
+    stopReason = 'Codex App Server URL matched processes, but no safe process-tree root was found.';
+  } else if (roots.length > 1) {
+    stopReason = 'Codex App Server URL matched multiple independent process-tree roots; refusing ambiguous forced stop.';
+  } else if (roots.length === 1) {
+    pid = roots[0]?.pid ?? null;
+    processTree = pid === null ? [] : collectProcessTree(input.processes, [pid]);
+    canStop = pid !== null;
+    stopReason = canStop
+      ? 'Codex App Server process tree for the requested URL can be stopped with force.'
+      : 'Codex App Server URL matched a process without a valid pid.';
+  }
+
+  return {
+    url,
+    pid,
+    processTree,
+    matchCount: matches.length,
+    rootCount: roots.length,
+    canStop,
+    stopReason,
+  };
+}
+
 function publicTarget(target: ManagedAppServerTarget, workspace: string, includeProcessTree = true): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     stateFilePreview: redactSensitiveText(target.stateFile.replace(resolveWorkspaceRoot(workspace), '<workspace>')),
@@ -195,6 +291,52 @@ function publicTarget(target: ManagedAppServerTarget, workspace: string, include
     payload.processTree = redactValue(summarizeProcesses(target.processTree), { workspace });
   }
   return payload;
+}
+
+function publicUrlTarget(target: AppServerUrlTarget, workspace: string, includeProcessTree = true): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    url: redactSensitiveText(target.url),
+    pid: target.pid,
+    canStop: target.canStop,
+    stopReason: target.stopReason,
+    matchCount: target.matchCount,
+    rootCount: target.rootCount,
+    processTreeCount: target.processTree.length,
+  };
+  if (includeProcessTree) {
+    payload.processTree = redactValue(summarizeProcesses(target.processTree), { workspace });
+  }
+  return payload;
+}
+
+function forcedUrlStateUpdate(input: {
+  workspace: string;
+  expectedAppServerUrl: string;
+}): Record<string, unknown> {
+  const stateFile = appServerStateFileForWorkspace(input.workspace, 'primary');
+  const stateRead = readAppServerStateFile(stateFile, 'primary');
+  const stateUrl = validatedStateUrl(stateRead.state);
+  if (!stateRead.exists || !stateRead.ok || stateUrl !== input.expectedAppServerUrl) {
+    return {
+      stateUpdated: false,
+      reason: 'workspace launcher state did not point at the forced-stop App Server URL',
+    };
+  }
+
+  writeAppServerState(stopStateFrom(stateRead.state, input.workspace), input.workspace);
+  return {
+    stateUpdated: true,
+    reason: 'workspace launcher state pointed at the forced-stop App Server URL and was marked stopped',
+  };
+}
+
+function appServerProcessStillMatches(input: {
+  pid: number;
+  expectedAppServerUrl: string;
+  processes: readonly ProcessEntry[];
+}): boolean {
+  const process = input.processes.find((entry) => entry.pid === input.pid);
+  return process !== undefined && processListensOnAppServerUrl(process, input.expectedAppServerUrl);
 }
 
 function reconcileDeadManagedState(input: {
@@ -250,14 +392,17 @@ function requestedStopEvidence(input: {
   workspace: string;
   timeoutMs: number;
   delayMs: number;
+  appServerUrl?: string | undefined;
 }): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     workspacePreview: '<workspace>',
     timeoutMs: input.timeoutMs,
     delayMs: input.delayMs,
-    scope: 'workspace-owned-app-server',
+    scope: input.appServerUrl === undefined ? 'workspace-owned-app-server' : 'forced-app-server-url',
     remoteTuiWillBeStopped: false,
   };
+  if (input.appServerUrl !== undefined) payload.appServerUrl = redactSensitiveText(input.appServerUrl);
+  return payload;
 }
 
 function readyzUrl(wsUrl: string): string {
@@ -344,6 +489,7 @@ export function buildAppServerStopOperationArgs(input: AppServerStopOperationInp
     '--expected-app-server-url',
     input.expectedAppServerUrl,
   ];
+  if (input.forceByUrl === true) args.push('--force-by-url');
   if (input.timeoutMs !== undefined) args.push('--timeout-ms', String(input.timeoutMs));
   if (input.delayMs !== undefined) args.push('--delay-ms', String(input.delayMs));
   return args;
@@ -354,6 +500,7 @@ export function parseAppServerStopOperationArgs(argv: readonly string[]): AppSer
   let workspace: string | undefined;
   let expectedPid: number | undefined;
   let expectedAppServerUrl: string | undefined;
+  let forceByUrl = false;
   let timeoutMs: number | undefined;
   let delayMs: number | undefined;
 
@@ -372,6 +519,8 @@ export function parseAppServerStopOperationArgs(argv: readonly string[]): AppSer
     } else if (arg === '--expected-app-server-url' && value !== undefined) {
       expectedAppServerUrl = value;
       index += 1;
+    } else if (arg === '--force-by-url') {
+      forceByUrl = true;
     } else if (arg === '--timeout-ms' && value !== undefined) {
       timeoutMs = Number(value);
       index += 1;
@@ -397,6 +546,7 @@ export function parseAppServerStopOperationArgs(argv: readonly string[]): AppSer
     expectedPid: parsedExpectedPid,
     expectedAppServerUrl: validateAppServerUrl(expectedAppServerUrl, 'Expected App Server URL').href,
   };
+  if (forceByUrl) operationInput.forceByUrl = true;
   if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs)) operationInput.timeoutMs = timeoutMs;
   if (typeof delayMs === 'number' && Number.isFinite(delayMs)) operationInput.delayMs = delayMs;
   return operationInput;
@@ -445,55 +595,108 @@ export function buildAppServerStopPayload(
   const delayMs = input.delayMs ?? DEFAULT_DELAY_MS;
   const dryRun = input.dryRun ?? true;
   const confirm = input.confirm === true;
-  const requested = requestedStopEvidence({ workspace, timeoutMs, delayMs });
-  const target = managedAppServerTarget({
-    workspace,
-    processes: processLister(),
-  });
-  const targetPayload = publicTarget(target, workspace);
+  const explicitAppServerUrl = input.appServerUrl === undefined
+    ? undefined
+    : validateAppServerUrl(input.appServerUrl, 'Forced App Server stop URL').href;
+  const force = input.force === true;
+  const processes = processLister();
+  const target = explicitAppServerUrl === undefined
+    ? managedAppServerTarget({
+        workspace,
+        processes,
+      })
+    : null;
+  const stateFallbackAppServerUrl = explicitAppServerUrl === undefined
+    && force
+    && input.useStateUrl === true
+    && target !== null
+    && !target.canStop
+    && target.url !== null
+    ? target.url
+    : undefined;
+  const appServerUrl = explicitAppServerUrl ?? stateFallbackAppServerUrl;
+  const requested = requestedStopEvidence({ workspace, timeoutMs, delayMs, appServerUrl });
+  const urlTarget = appServerUrl === undefined
+    ? null
+    : appServerUrlTarget({ appServerUrl, processes });
+  const targetPayload = target === null ? null : publicTarget(target, workspace);
+  const urlTargetPayload = urlTarget === null ? null : publicUrlTarget(urlTarget, workspace);
 
   if (dryRun) {
-    return {
+    const payload: Record<string, unknown> = {
       ok: true,
       dryRun: true,
       confirmRequired: !confirm,
       ...requested,
-      managedAppServer: targetPayload,
       notes: [
-        'This only targets the primary workspace-managed App Server process tree.',
+        appServerUrl === undefined
+          ? 'This only targets the primary workspace-managed App Server process tree.'
+          : 'This targets a loopback Codex App Server process tree by URL only when force:true and confirm:true are supplied.',
         'It does not stop remote TUI windows or user global MCP server configuration.',
       ],
     };
+    if (targetPayload !== null) payload.managedAppServer = targetPayload;
+    if (urlTargetPayload !== null) payload.appServerUrlTarget = urlTargetPayload;
+    return payload;
   }
 
   if (!confirm) {
-    return {
+    const payload: Record<string, unknown> = {
       ok: false,
       refused: true,
       dryRun: false,
       confirmRequired: true,
       ...requested,
-      managedAppServer: targetPayload,
       message: 'Pass confirm:true with dryRun:false to schedule App Server stop.',
     };
+    if (targetPayload !== null) payload.managedAppServer = targetPayload;
+    if (urlTargetPayload !== null) payload.appServerUrlTarget = urlTargetPayload;
+    return payload;
   }
 
-  if (!target.canStop || target.pid === null || target.url === null) {
+  if (appServerUrl !== undefined && !force) {
     return {
       ok: false,
       refused: true,
       dryRun: false,
       confirmRequired: false,
+      forceRequired: true,
       ...requested,
-      managedAppServer: targetPayload,
-      message: 'No owned running workspace App Server target is safe to stop.',
+      appServerUrlTarget: urlTargetPayload,
+      message: 'Stopping an App Server by URL requires force:true in addition to confirm:true.',
     };
+  }
+
+  const selectedManagedTarget = target?.canStop === true ? target : null;
+  const selectedUrlTarget = selectedManagedTarget === null && urlTarget?.canStop === true ? urlTarget : null;
+  const selectedPid = selectedManagedTarget?.pid ?? selectedUrlTarget?.pid ?? null;
+  const selectedUrl = selectedManagedTarget?.url ?? selectedUrlTarget?.url ?? null;
+  const selectedForceByUrl = selectedManagedTarget === null && selectedUrlTarget !== null;
+  const canStop = selectedManagedTarget !== null || selectedUrlTarget !== null;
+  if (!canStop || selectedPid === null || selectedUrl === null) {
+    const payload: Record<string, unknown> = {
+      ok: false,
+      refused: true,
+      dryRun: false,
+      confirmRequired: false,
+      ...requested,
+      message: appServerUrl === undefined
+        ? 'No owned running workspace App Server target is safe to stop.'
+        : 'No running Codex App Server target for the requested URL is safe to stop.',
+    };
+    if (targetPayload !== null) payload.managedAppServer = targetPayload;
+    if (urlTargetPayload !== null) payload.appServerUrlTarget = urlTargetPayload;
+    return payload;
   }
 
   const operation = store.create({
     kind: 'app_server_stop',
     status: 'running',
-    evidence: { requested, managedAppServer: targetPayload },
+    evidence: {
+      requested,
+      ...(targetPayload === null ? {} : { managedAppServer: targetPayload }),
+      ...(urlTargetPayload === null ? {} : { appServerUrlTarget: urlTargetPayload }),
+    },
     nextAction: STOP_NEXT_ACTION,
   });
 
@@ -501,14 +704,20 @@ export function buildAppServerStopPayload(
     const background = scheduler({
       operationId: operation.id,
       workspace,
-      expectedPid: target.pid,
-      expectedAppServerUrl: target.url,
+      expectedPid: selectedPid,
+      expectedAppServerUrl: selectedUrl,
+      ...(selectedForceByUrl ? { forceByUrl: true } : {}),
       timeoutMs,
       delayMs,
     });
     const updatedOperation =
       store.update(operation.id, {
-        evidence: { requested, managedAppServer: targetPayload, background },
+        evidence: {
+          requested,
+          ...(targetPayload === null ? {} : { managedAppServer: targetPayload }),
+          ...(urlTargetPayload === null ? {} : { appServerUrlTarget: urlTargetPayload }),
+          background,
+        },
         nextAction: STOP_NEXT_ACTION,
       }) ?? operation;
     return {
@@ -522,7 +731,12 @@ export function buildAppServerStopPayload(
   } catch (error) {
     store.fail(operation.id, {
       failure: publicFailure(error),
-      evidence: { requested, managedAppServer: targetPayload, background: { scheduled: false } },
+      evidence: {
+        requested,
+        ...(targetPayload === null ? {} : { managedAppServer: targetPayload }),
+        ...(urlTargetPayload === null ? {} : { appServerUrlTarget: urlTargetPayload }),
+        background: { scheduled: false },
+      },
       nextAction: 'Inspect failure with codex_operation_read.',
     });
     throw error;
@@ -595,32 +809,62 @@ export async function runAppServerStopOperation(
   const processStopper = deps.processStopper ?? stopProcessTree;
   const timeoutMs = boundedInteger(input.timeoutMs, DEFAULT_TIMEOUT_MS, 0, MAX_TIMEOUT_MS);
   const delayMs = boundedInteger(input.delayMs, DEFAULT_DELAY_MS, 0, MAX_DELAY_MS);
-  const requested = requestedStopEvidence({ workspace, timeoutMs, delayMs });
+  const requested = requestedStopEvidence({
+    workspace,
+    timeoutMs,
+    delayMs,
+    appServerUrl: input.forceByUrl === true ? input.expectedAppServerUrl : undefined,
+  });
   const existingEvidence = recordFrom(store.read(input.operationId)?.evidence);
   const evidence: Record<string, unknown> = { ...existingEvidence, requested };
 
   try {
     if (delayMs > 0) await sleep(delayMs);
+    const processes = processLister();
     const stateFile = appServerStateFileForWorkspace(workspace, 'primary');
     const stateRead = readAppServerStateFile(stateFile, 'primary');
     const state = stateRead.state;
-    const url = validatedStateUrl(state);
-    const pid = statePid(state);
-    if (url !== input.expectedAppServerUrl || pid !== input.expectedPid) {
-      return store.fail(input.operationId, {
-        failure: {
-          name: 'AppServerStateChanged',
-          message: 'Workspace App Server launcher state changed before stop operation executed.',
-        },
-        evidence: {
-          ...evidence,
-          current: publicTarget(managedAppServerTarget({ workspace, processes: processLister() }), workspace),
-        },
-        nextAction: 'Inspect current App Server state before retrying.',
-      });
+    if (input.forceByUrl === true) {
+      if (!appServerProcessStillMatches({
+        pid: input.expectedPid,
+        expectedAppServerUrl: input.expectedAppServerUrl,
+        processes,
+      })) {
+        return store.fail(input.operationId, {
+          failure: {
+            name: 'AppServerProcessChanged',
+            message: 'Codex App Server process no longer matches the expected forced-stop URL.',
+          },
+          evidence: {
+            ...evidence,
+            current: {
+              appServerUrlTarget: publicUrlTarget(appServerUrlTarget({
+                appServerUrl: input.expectedAppServerUrl,
+                processes,
+              }), workspace),
+            },
+          },
+          nextAction: 'Inspect current App Server process evidence before retrying.',
+        });
+      }
+    } else {
+      const url = validatedStateUrl(state);
+      const pid = statePid(state);
+      if (url !== input.expectedAppServerUrl || pid !== input.expectedPid) {
+        return store.fail(input.operationId, {
+          failure: {
+            name: 'AppServerStateChanged',
+            message: 'Workspace App Server launcher state changed before stop operation executed.',
+          },
+          evidence: {
+            ...evidence,
+            current: publicTarget(managedAppServerTarget({ workspace, processes }), workspace),
+          },
+          nextAction: 'Inspect current App Server state before retrying.',
+        });
+      }
     }
 
-    const processes = processLister();
     const tree = collectProcessTree(processes, [input.expectedPid]);
     evidence.match = {
       processTreeCount: tree.length,
@@ -635,10 +879,17 @@ export async function runAppServerStopOperation(
     evidence.stopped = redactValue(stopped, { workspace });
 
     if ((stopped as { ok?: unknown }).ok === true) {
-      writeAppServerState(stopStateFrom(state, workspace), workspace);
+      evidence.state = input.forceByUrl === true
+        ? forcedUrlStateUpdate({ workspace, expectedAppServerUrl: input.expectedAppServerUrl })
+        : { stateUpdated: true, reason: 'workspace-owned launcher state was marked stopped' };
+      if (input.forceByUrl !== true) {
+        writeAppServerState(stopStateFrom(state, workspace), workspace);
+      }
       return store.complete(input.operationId, {
         evidence,
-        nextAction: 'Managed App Server stopped. Start/reuse it again with codex_app_server_start or npm run remote.',
+        nextAction: input.forceByUrl === true
+          ? 'Forced App Server URL stopped. Start/reuse an App Server again with codex_app_server_start or npm run remote.'
+          : 'Managed App Server stopped. Start/reuse it again with codex_app_server_start or npm run remote.',
       });
     }
 

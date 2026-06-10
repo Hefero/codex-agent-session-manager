@@ -21,6 +21,13 @@ test('parseRemoteArgs rejects conflicting resume modes', () => {
   assert.deepEqual(parseRemoteArgs(['--resume', 'thread-a']), {
     sessionId: 'thread-a',
   });
+  assert.deepEqual(parseRemoteArgs(['--dangerously-bypass-approvals-and-sandbox']), {
+    noBypassSandbox: false,
+  });
+  assert.deepEqual(parseRemoteArgs(['--workspace', 'project-a', '--', '--model', 'gpt-5', '--search', 'hello']), {
+    workspace: 'project-a',
+    codexArgs: ['--model', 'gpt-5', '--search', 'hello'],
+  });
 });
 
 test('buildRemotePlan treats --resume alias as a session resume with default sandbox bypass', async () => {
@@ -52,6 +59,73 @@ test('buildRemotePlan forwards non-secret prompt to launched Codex TUI', async (
     assert.equal(plan.tui.promptIncluded, true);
     assert.deepEqual(plan.tui.args.slice(0, 2), ['resume', 'thread-a']);
     assert.equal(plan.tui.args.at(-1), 'hello managed remote');
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('buildRemotePlan preserves native Codex argv after passthrough separator', async () => {
+  const workspace = tempWorkspace();
+  try {
+    const options = parseRemoteArgs(['--workspace', workspace, '--port', '4506', '--', '--model', 'gpt-5', '--search', 'hello passthrough']);
+    const plan = await buildRemotePlan(
+      options,
+      { codexCommandResolver: () => 'codex-test' },
+    );
+
+    assert.equal(plan.tui.promptIncluded, true);
+    assert.equal(plan.tui.args.includes('--remote'), true);
+    assert.equal(plan.tui.args.includes('--dangerously-bypass-approvals-and-sandbox'), false);
+    assert.deepEqual(plan.tui.args.slice(-4), ['--model', 'gpt-5', '--search', 'hello passthrough']);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('buildRemotePlan preserves native App Server argv while owning listen URL', async () => {
+  const workspace = tempWorkspace();
+  try {
+    const plan = await buildRemotePlan(
+      {
+        workspace,
+        port: '4506',
+        noResume: true,
+        appServerArgs: ['--config', 'model="gpt-5"', '--enable', 'js_repl', '--enable', 'image_generation'],
+      },
+      { codexCommandResolver: () => 'codex-test' },
+    );
+
+    assert.deepEqual(plan.server.args, [
+      'app-server',
+      '--listen',
+      'ws://127.0.0.1:4506',
+      '--config',
+      'model="gpt-5"',
+      '--enable',
+      'js_repl',
+      '--enable',
+      'image_generation',
+    ]);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('buildRemotePlan rejects native App Server listen transport overrides', async () => {
+  const workspace = tempWorkspace();
+  try {
+    await assert.rejects(
+      () => buildRemotePlan(
+        {
+          workspace,
+          port: '4506',
+          noResume: true,
+          appServerArgs: ['--listen', 'stdio://'],
+        },
+        { codexCommandResolver: () => 'codex-test' },
+      ),
+      /owns --listen\/--stdio/u,
+    );
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

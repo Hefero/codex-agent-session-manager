@@ -1,11 +1,13 @@
-# Alpha 3 Hardening Review
+# Alpha Hardening Review Log
 
-Date: 2026-06-07 to 2026-06-08
+Date: 2026-06-07 onward
 
-This review focuses on public-alpha hardening after the first npm release. The
-goal is not to remove all sharp edges, but to make project-scoped filesystem
-operations and agent-triggered package installation match the safety contract
-advertised by the tool.
+This log tracks public-alpha hardening after the first npm release. It started
+as the alpha.3 review and now records the follow-up alpha hardening batches.
+The goal is not to remove all sharp edges, but to make project-scoped
+filesystem operations, agent-triggered package installation, App Server
+session control, and error feedback match the safety contract advertised by the
+tool.
 
 ## Fixed Findings
 
@@ -515,7 +517,7 @@ probes showed:
 - the new Windows strategy is `node-npm-cli` and successfully returned npm
   `11.9.0` from the same `test3` cwd;
 - a globally linked working tree now proceeds past EINVAL and fails only at the
-  expected registry boundary because `0.1.0-alpha.5` is not yet published;
+  expected registry boundary because the target alpha was not yet published;
 - a full no-publish init replay succeeds when the target project first installs
   a local packed tarball;
 - `npm link codex-agent-session-manager` inside the target project is not a
@@ -671,10 +673,11 @@ into its parent shell. The next probe adds an explicit shell integration:
   default instead of plain Codex, so typing `codex` in an initialized workspace
   starts/reuses the managed App Server and launches the visible TUI with
   `--remote`.
-- The local supervisors translate basic Codex-shaped entry forms:
-  `codex "<prompt>"` becomes managed `remote --prompt <prompt>`, and
-  `codex resume <threadId> "<prompt>"` becomes managed
-  `remote --resume <threadId> --prompt <prompt>`.
+- The local supervisors preserve Codex-shaped interactive launches by calling
+  managed `remote -- <native Codex argv>`. This keeps flags such as `--model`,
+  `--search`, and `--dangerously-bypass-approvals-and-sandbox` in native Codex
+  form instead of translating user input into manager-specific `--prompt`
+  arguments.
 - `codex_session_hard_relaunch` accepts
   `handoffMode: "shell-resume-next"`. In that mode the background child writes
   `.codex-agent-session-manager/state/shell-resume-next.json` with
@@ -714,7 +717,7 @@ Current working-tree validation for this hardening pass:
   `fresh-prompt-new-thread`, and `codex_thread_context` found the marker
   response in the loaded thread.
 
-External alpha.3 env/auth probe:
+External env/auth probe:
 
 - Tavily MCP installed from a local package tarball into `codex-managed-test`
   with `--env-var TAVILY_API_KEY` and `--no-default-stdio-arg`.
@@ -729,6 +732,14 @@ External alpha.3 env/auth probe:
   uninstalled `tavily-mcp` and `codex-agent-session-manager`, removed empty npm
   remnants, and left the scratch workspace empty.
 
-Full next-alpha release validation should also run after the version bump:
+Latest release validation run:
 
+- `npm run check`
+- `npm test`
+- `npm run smoke`
+- `npm run build`
+- `npm run security:smoke`
+- `npm run security:scan`
+- `npm run audit:prod`
+- `npm run pack:validate`
 - `npm publish --dry-run --tag alpha`

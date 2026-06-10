@@ -35,6 +35,8 @@ export interface RemoteOptions {
   dryRun?: boolean;
   enableImageGeneration?: boolean;
   noBypassSandbox?: boolean;
+  appServerArgs?: string[];
+  codexArgs?: string[];
   help?: boolean;
 }
 
@@ -88,6 +90,10 @@ Options:
   --dry-run                   Print resolved commands without starting processes.
   --enable-image-generation   Do not pass --disable image_generation.
   --no-bypass-sandbox         Do not pass --dangerously-bypass-approvals-and-sandbox.
+  --dangerously-bypass-approvals-and-sandbox
+                              Accepted for Codex CLI compatibility; this is the default.
+  -- <codex-args...>          Pass native Codex TUI arguments through verbatim.
+                              The wrapper only injects --remote and workspace defaults.
   --help                      Show this help.
 `;
 }
@@ -97,6 +103,10 @@ export function parseRemoteArgs(argv: readonly string[]): RemoteOptions {
 
   for (let index = 0; index < argv.length; index += 1) {
     const rawArg = argv[index] ?? '';
+    if (rawArg === '--') {
+      options.codexArgs = argv.slice(index + 1);
+      break;
+    }
     const [name, inlineValue] = rawArg.startsWith('--') && rawArg.includes('=')
       ? rawArg.split(/=(.*)/su, 2)
       : [rawArg, undefined];
@@ -155,6 +165,9 @@ export function parseRemoteArgs(argv: readonly string[]): RemoteOptions {
       case '--no-bypass-sandbox':
         options.noBypassSandbox = true;
         break;
+      case '--dangerously-bypass-approvals-and-sandbox':
+        options.noBypassSandbox = false;
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -172,10 +185,83 @@ export function parseRemoteArgs(argv: readonly string[]): RemoteOptions {
 }
 
 function remoteMode(options: RemoteOptions): RemoteMode {
+  if (options.codexArgs !== undefined) return 'fresh';
   if (options.sessionId !== undefined) return 'session';
   if (options.resumeLast === true) return 'last';
   if (options.pick === true) return 'pick';
   return 'fresh';
+}
+
+function hasArg(args: readonly string[], names: readonly string[]): boolean {
+  return args.some((arg) => names.includes(arg) || names.some((name) => arg.startsWith(`${name}=`)));
+}
+
+function passthroughPromptIncluded(args: readonly string[]): boolean {
+  const last = args.at(-1);
+  if (last === undefined || last.startsWith('-')) return false;
+  return true;
+}
+
+function buildCodexPassthroughArgs(input: {
+  appServerUrl: string;
+  workspace: string;
+  codexArgs: readonly string[];
+  noBypassSandbox?: boolean | undefined;
+  enableImageGeneration?: boolean | undefined;
+}): string[] {
+  const original = [...input.codexArgs];
+  const args: string[] = ['--disable', 'js_repl'];
+  if (input.enableImageGeneration !== true) {
+    args.push('--disable', 'image_generation');
+  }
+  if (!hasArg(original, ['--remote'])) {
+    args.push('--remote', input.appServerUrl);
+  }
+  if (input.noBypassSandbox === false && !hasArg(original, ['--dangerously-bypass-approvals-and-sandbox'])) {
+    args.push('--dangerously-bypass-approvals-and-sandbox');
+  }
+  if (!hasArg(original, ['-C', '--cd'])) {
+    args.push('-C', input.workspace);
+  }
+  args.push(...original);
+  return args;
+}
+
+function optionPresent(args: readonly string[], names: readonly string[]): boolean {
+  return args.some((arg) => names.includes(arg) || names.some((name) => arg.startsWith(`${name}=`)));
+}
+
+function featureMentioned(args: readonly string[], feature: string): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? '';
+    if ((arg === '--enable' || arg === '--disable') && args[index + 1] === feature) return true;
+    if (arg === `--enable=${feature}` || arg === `--disable=${feature}`) return true;
+  }
+  return false;
+}
+
+function validateAppServerNativeArgs(args: readonly string[]): void {
+  if (optionPresent(args, ['--listen', '--stdio'])) {
+    throw new Error('Managed App Server launch owns --listen/--stdio. Use --url, --host, or --port instead.');
+  }
+}
+
+function buildAppServerArgs(input: {
+  appServerUrl: string;
+  enableImageGeneration?: boolean | undefined;
+  appServerArgs?: readonly string[] | undefined;
+}): string[] {
+  const nativeArgs = [...(input.appServerArgs ?? [])];
+  validateAppServerNativeArgs(nativeArgs);
+  const args = ['app-server', '--listen', input.appServerUrl];
+  if (!featureMentioned(nativeArgs, 'js_repl')) {
+    args.push('--disable', 'js_repl');
+  }
+  if (input.enableImageGeneration !== true && !featureMentioned(nativeArgs, 'image_generation')) {
+    args.push('--disable', 'image_generation');
+  }
+  args.push(...nativeArgs);
+  return args;
 }
 
 function parsePort(value: string, source: string): number {
@@ -335,12 +421,12 @@ function compileWindowsHiddenLauncher(outputPath: string, sourceHash: string, st
   return existsSync(outputPath);
 }
 
-export function prepareWindowsHiddenLauncherForWorkspace(workspace: string, dryRun: boolean): string | null {
+export function prepareWindowsHiddenLauncherForDirectory(directory: string, dryRun: boolean): string | null {
   if (process.platform !== 'win32') return null;
   if (!existsSync(WINDOWS_HIDDEN_LAUNCHER_SOURCE)) return null;
 
-  const target = workspacePath(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_EXE);
-  const stampPath = workspacePath(workspace, WORKSPACE_STATE_DIR, WINDOWS_HIDDEN_LAUNCHER_STAMP);
+  const target = join(directory, WINDOWS_HIDDEN_LAUNCHER_EXE);
+  const stampPath = join(directory, WINDOWS_HIDDEN_LAUNCHER_STAMP);
   if (dryRun) return target;
 
   const sourceContent = readText(WINDOWS_HIDDEN_LAUNCHER_SOURCE);
@@ -350,6 +436,10 @@ export function prepareWindowsHiddenLauncherForWorkspace(workspace: string, dryR
   if (!shouldCompile) return target;
 
   return compileWindowsHiddenLauncher(target, sourceHash, stampPath) ? target : null;
+}
+
+export function prepareWindowsHiddenLauncherForWorkspace(workspace: string, dryRun: boolean): string | null {
+  return prepareWindowsHiddenLauncherForDirectory(workspacePath(workspace, WORKSPACE_STATE_DIR), dryRun);
 }
 
 function canLaunchThroughWindowsHiddenLauncher(command: string): boolean {
@@ -363,24 +453,33 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
   const target = await resolveTargetUrl(options, workspace, { freePort });
   const mode = remoteMode(options);
   const logs = logPaths(workspace, target.url);
-  const serverArgs = ['app-server', '--listen', target.url, '--disable', 'js_repl'];
-  if (options.enableImageGeneration !== true) {
-    serverArgs.push('--disable', 'image_generation');
-  }
+  const serverArgs = buildAppServerArgs({
+    appServerUrl: target.url,
+    enableImageGeneration: options.enableImageGeneration,
+    appServerArgs: options.appServerArgs,
+  });
   const hiddenLauncher = canLaunchThroughWindowsHiddenLauncher(codexCommand)
     ? prepareWindowsHiddenLauncherForWorkspace(workspace, options.dryRun === true)
     : null;
   const serverCommand = hiddenLauncher ?? codexCommand;
   const serverArgsWithLauncher = hiddenLauncher ? [codexCommand, ...serverArgs] : serverArgs;
-  const tuiArgs = buildCodexArgs({
-    appServerUrl: target.url,
-    workspace,
-    mode,
-    threadId: options.sessionId,
-    prompt: options.prompt,
-    bypassSandbox: options.noBypassSandbox !== true,
-    enableImageGeneration: options.enableImageGeneration,
-  });
+  const tuiArgs = options.codexArgs !== undefined
+    ? buildCodexPassthroughArgs({
+      appServerUrl: target.url,
+      workspace,
+      codexArgs: options.codexArgs,
+      noBypassSandbox: options.noBypassSandbox,
+      enableImageGeneration: options.enableImageGeneration,
+    })
+    : buildCodexArgs({
+      appServerUrl: target.url,
+      workspace,
+      mode,
+      threadId: options.sessionId,
+      prompt: options.prompt,
+      bypassSandbox: options.noBypassSandbox !== true,
+      enableImageGeneration: options.enableImageGeneration,
+    });
 
   return {
     workspace,
@@ -398,7 +497,9 @@ export async function buildRemotePlan(options: RemoteOptions, deps: RemoteDeps =
     tui: {
       command: codexCommand,
       args: tuiArgs,
-      promptIncluded: Boolean(options.prompt && options.prompt.length > 0),
+      promptIncluded: options.codexArgs !== undefined
+        ? passthroughPromptIncluded(options.codexArgs)
+        : Boolean(options.prompt && options.prompt.length > 0),
     },
     stateFile: appServerStateFileForWorkspace(workspace, 'primary'),
   };

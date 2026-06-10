@@ -30,6 +30,12 @@ Current foundation:
 - Remote TUI cleanup tool: codex_session_close.
 - Remote TUI launch tool: codex_session_launch.
 - Remote TUI replacement tool: codex_session_replace.
+- Guidance tool: codex_session_manager_help.
+- Guidance resources: codex-session-manager://guide,
+  codex-session-manager://workflows,
+  codex-session-manager://workflows/mcp-handling,
+  codex-session-manager://safety, and
+  codex-session-manager://global-install.
 - Durable operation resource: codex-session-manager://operations.
 - Runtime operation state: .codex-agent-session-manager/state/operations.json.
 - Workspace cwd guardrails reject lexical and symlink/junction escapes.
@@ -37,21 +43,22 @@ Current foundation:
   .codex-agent-session-manager state and ignores legacy hot-reloader state.
 - Public CLI:
   codex-agent-session-manager init,
+  codex-agent-session-manager global install|uninstall|status,
   codex-agent-session-manager app-server start|status|stop,
   codex-agent-session-manager mcp refresh, and
   codex-agent-session-manager session launch|close|replace.
 - Project init writes project-scoped `.codex/config.toml`, local runtime ignore
-  rules, package scripts when `package.json` exists, and an `AGENTS.md` block
-  unless `--no-agents` is used.
+  rules, and package scripts. It does not create or update `AGENTS.md`; agent
+  guidance lives in MCP tool descriptions, codex_session_manager_help, and
+  resources.
 - Package hardening script: npm run pack:validate. Do not parallelize
   pack:dry-run and pack:smoke because both rebuild dist.
-- Env/auth npm MCP hardening target: Tavily MCP with --env-var TAVILY_API_KEY
-  and --no-default-stdio-arg. Never store secret values in TOML.
+- Env/auth npm MCP hardening target: an MCP with --env-var SEARCH_API_KEY and
+  --no-default-stdio-arg. Never store secret values in TOML.
 - Security scripts: security:smoke, security:scan, audit:prod.
 - Smoke: raw MCP JSON-RPC initialize, tools/list, tools/call, resources/list.
 
 Important docs:
-- AGENTS.md
 - docs/architecture.md
 - docs/project-plan.md
 - docs/validation-plan.md

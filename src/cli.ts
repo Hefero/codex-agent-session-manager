@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { startStdioServer } from './mcp-server.js';
 import { deinitUsage, runDeinitCommand } from './deinit.js';
+import { formatCliError, userError } from './errors.js';
+import { globalUsage, runGlobalCommand } from './global-config.js';
 import { initUsage, runInitCommand } from './init.js';
 import { publicCliUsage, runPublicCommand } from './public-cli.js';
 import { remoteUsage, runRemoteCommand } from './remote.js';
@@ -23,10 +25,11 @@ Usage:
   codex-agent-session-manager serve
   codex-agent-session-manager init [options]
   codex-agent-session-manager deinit [options]
+  codex-agent-session-manager global <install|uninstall|status> [options]
   codex-agent-session-manager remote [options]
   codex-agent-session-manager stop [options]
   codex-agent-session-manager app-server <start|status|stop> [options]
-  codex-agent-session-manager mcp <add|refresh> [options]
+  codex-agent-session-manager mcp <local|global|refresh> [options]
   codex-agent-session-manager operation <read|wait> [options]
   codex-agent-session-manager session <launch|close|replace> [options]
   codex-agent-session-manager shell-hook <install|uninstall|status> [options]
@@ -37,10 +40,11 @@ Commands:
   serve       Start the MCP stdio server.
   init        Initialize a project-scoped Codex session manager setup.
   deinit      Remove the project-scoped session manager scaffold.
+  global      Opt-in user-global MCP config and codex shell hook management.
   remote      Start/reuse a workspace App Server and launch Codex remote.
   stop        Alias for app-server stop.
   app-server  Manage the workspace-owned App Server lifecycle.
-  mcp         Add npm MCP servers, reload MCPs, and start continuation turns.
+  mcp         Add/remove local or global npm MCP servers, reload MCPs, and start continuation turns.
   operation   Read or wait for durable session-manager operations.
   session     Launch, close, or replace Codex remote TUI sessions.
   shell-hook  Install an opt-in codex function hook for PowerShell, bash, or zsh.
@@ -48,6 +52,7 @@ Commands:
 ${publicCliUsage()}
 ${initUsage()}
 ${deinitUsage()}
+${globalUsage()}
 ${shellHookUsage()}
 `);
 }
@@ -82,6 +87,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === 'deinit') {
     process.exitCode = await runDeinitCommand(argv.slice(1));
+    return;
+  }
+
+  if (command === 'global') {
+    process.exitCode = await runGlobalCommand(argv.slice(1));
     return;
   }
 
@@ -145,13 +155,21 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  process.stderr.write(`Unknown command: ${command}\n`);
+  process.stderr.write(`${formatCliError(userError({
+    code: 'unknown_command',
+    message: `Unknown command: ${command}`,
+    command,
+    parameter: 'command',
+    received: command,
+    expected: 'One of: serve, init, deinit, global, remote, stop, app-server, mcp, operation, session, shell-hook, --help, --version.',
+    examples: ['codex-agent-session-manager --help'],
+    nextAction: 'Choose a supported command or run --help.',
+  }))}\n`);
   printHelp();
   process.exitCode = 2;
 }
 
 await main(process.argv.slice(2)).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
+  process.stderr.write(`${formatCliError(error)}\n`);
   process.exitCode = 2;
 });

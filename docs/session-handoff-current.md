@@ -39,8 +39,15 @@ Implemented:
 - Remote TUI launch tool `codex_session_launch`.
 - Remote TUI replacement tool `codex_session_replace`.
 - Public CLI surface:
-  `init`, `app-server start|status|stop`, `mcp refresh`, and
+  `init`, `global install|uninstall|status`,
+  `app-server start|status|stop`, `mcp refresh`, and
   `session launch|close|replace`.
+- Guidance tool `codex_session_manager_help`.
+- Guidance resources `codex-session-manager://guide`,
+  `codex-session-manager://workflows`,
+  `codex-session-manager://workflows/mcp-handling`,
+  `codex-session-manager://safety`, and
+  `codex-session-manager://global-install`.
 - Resource `codex-session-manager://operations`.
 - Runtime operation state under
   `.codex-agent-session-manager/state/operations.json`.
@@ -50,16 +57,14 @@ Implemented:
 - Security scripts `security:smoke`, `security:scan`, and `audit:prod`.
 - Package hardening script `pack:validate`, which runs package smoke and pack
   dry-run sequentially.
-- Env/auth npm MCP hardening target: Tavily MCP with `--env-var
-  TAVILY_API_KEY` and `--no-default-stdio-arg`. Never store secret values in
-  TOML.
+- Env/auth npm MCP hardening target: an MCP with `--env-var SEARCH_API_KEY` and
+  `--no-default-stdio-arg`. Never store secret values in TOML.
 - Raw JSON-RPC MCP smoke in `scripts/smoke.ts`.
 - Unit test in `test/probe.test.ts`.
 - Initial docs and ADRs.
 
 Important docs:
 
-- `AGENTS.md`
 - `README.md`
 - `docs/architecture.md`
 - `docs/project-plan.md`
@@ -83,7 +88,7 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
-node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts init --dry-run --workspace .
 node --import tsx src/cli.ts --help
 node --import tsx src/cli.ts mcp --help
 node --import tsx src/cli.ts app-server start --dry-run --port 4566
@@ -398,13 +403,14 @@ Implemented behavior:
 project-scoped .codex/config.toml: codex_agent_session_manager
 .gitignore: .codex-agent-session-manager/
 package.json: scripts and devDependency when package.json exists
-AGENTS.md: small managed block by default, skipped by --no-agents
-global Codex config: untouched
+AGENTS.md: not created or updated by init
+global Codex config: untouched by init; only global install --confirm edits it
 ```
 
 Validation covers parsing, redacted dry-run output, no-write dry-run,
-application to a target project, idempotency, missing package.json, and
-`--no-agents`. The smoke runs `init --dry-run` against a temporary workspace.
+application to a target project, idempotency, missing package.json, and no
+generated `AGENTS.md`. The smoke runs `init --dry-run` against a temporary
+workspace.
 
 ## Latest Phase 10 Package Evidence
 
@@ -423,7 +429,7 @@ rejects source, tests, docs, .codex runtime state, and .exe binaries
 installs the .tgz into a temporary target project
 runs installed dist/cli.js
 runs init --dry-run and init from the installed package
-validates generated config, gitignore, scripts, and AGENTS.md
+validates generated config, gitignore, scripts, and no generated AGENTS.md
 runs npm run codex:remote:dry-run in the target project
 ```
 

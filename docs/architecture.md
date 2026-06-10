@@ -99,7 +99,11 @@ The current MCP surface exposes:
 - `codex_app_server_state_read`
 - `codex_app_server_status`
 - `codex_app_server_stop`
-- `codex_mcp_add_npm`
+- `codex_global_mcp_add_npm`
+- `codex_global_mcp_remove`
+- `codex_local_mcp_add_npm`
+- `codex_local_mcp_remove`
+- `codex_mcp_cleanup_report`
 - `codex_mcp_refresh`
 - `codex_mcp_reload`
 - `codex_mcp_status_list`
@@ -107,11 +111,18 @@ The current MCP surface exposes:
 - `codex_operation_wait`
 - `codex_session_close`
 - `codex_session_continue`
+- `codex_session_hard_relaunch`
 - `codex_session_launch`
+- `codex_session_manager_help`
 - `codex_session_manager_probe`
 - `codex_session_replace`
 - `codex_thread_context`
 - `codex_threads_list`
+- `codex-session-manager://guide`
+- `codex-session-manager://workflows`
+- `codex-session-manager://workflows/mcp-handling`
+- `codex-session-manager://safety`
+- `codex-session-manager://global-install`
 - `codex-session-manager://operations`
 
 ## Callable Refresh Evidence
@@ -171,9 +182,9 @@ Phase 4 composition adds the default refresh workflow:
   Final proof still requires the started continuation turn to call the changed
   model-callable tool.
 
-Phase 10 package bootstrap adds an agent-facing npm MCP installer:
+Phase 10 package bootstrap adds agent-facing npm MCP handlers:
 
-- `codex_mcp_add_npm` defaults to `dryRun: true`; real install/config writes
+- `codex_local_mcp_add_npm` defaults to `dryRun: true`; real install/config writes
   require `dryRun: false` and `confirm: true`.
 - With confirmation, it installs an npm MCP package into the current project
   and writes a marked project-scoped `.codex/config.toml` block.
@@ -189,6 +200,25 @@ Phase 10 package bootstrap adds an agent-facing npm MCP installer:
 - This is setup only. Final callable proof still requires `codex_mcp_refresh`
   followed by a real tool call from the continuation turn; direct MCP SDK calls
   are diagnostic only.
+- `codex_local_mcp_remove` and CLI `mcp local remove` remove only marked project-scoped
+  blocks created by `codex_local_mcp_add_npm` / `mcp local add npm`. They default to
+  dry-run, refuse to touch unmanaged MCP sections, and uninstall the inferred
+  npm package only with explicit opt-in and only when no other managed block
+  still references the package.
+- `codex_global_mcp_add_npm` installs a third-party npm MCP into an isolated
+  user-global runtime under the session-manager global state directory and
+  writes a marked user-global `~/.codex/config.toml` block.
+- `codex_global_mcp_remove` removes only marked user-global blocks created by
+  `codex_global_mcp_add_npm` and removes the isolated runtime only with
+  `uninstallPackage:true`.
+- Real local/global MCP add/remove executions create durable operation records
+  under the requesting workspace. `codex_mcp_cleanup_report` summarizes managed
+  local/global MCP blocks, package/runtime presence, orphaned managed global
+  runtime directories, and recent MCP add/remove operations without exposing raw
+  config or env values.
+- Global third-party MCP handling is intentionally separate from
+  `global install`, which manages only this package's own global MCP block and
+  shell hook.
 
 Phase 10 also adds project teardown:
 
@@ -196,11 +226,11 @@ Phase 10 also adds project teardown:
   `--confirm` to apply changes.
 - It removes recognized project-scoped scaffold only: the base
   `codex_agent_session_manager` `.codex/config.toml` block, generated npm
-  scripts, managed `AGENTS.md` block, and `.codex-agent-session-manager/`
-  plus `.npm-cache/` gitignore rules.
+  scripts, and `.codex-agent-session-manager/` plus `.npm-cache/` gitignore
+  rules.
 - Runtime state deletion is opt-in through `--remove-runtime`, guarded by a
   workspace containment check before recursive deletion.
-- Managed npm MCP blocks created by `mcp add npm` are kept by default and can
+- Managed npm MCP blocks created by `mcp local add npm` are kept by default and can
   be removed with `--remove-added-mcps`.
 - `deinit` does not run `npm uninstall` while the CLI is executing. Instead it
   returns `packagesToUninstall` so the operator can run npm uninstall after the
@@ -312,6 +342,12 @@ Phase 7 starts App Server lifecycle management from MCP:
   process tree. It defaults to `dryRun: true`, requires `dryRun: false` plus
   `confirm: true` for real execution, and schedules a detached child so the
   MCP tool call can return before the serving App Server is stopped.
+- If a workspace reused an App Server that is not marked owned in local
+  launcher state, stop can target an explicit loopback URL only with
+  `appServerUrl` plus `force:true` and `confirm:true` (or CLI
+  `app-server stop --url <ws-url> --force --confirm`). The operation revalidates
+  that the PID still looks like `codex app-server --listen <url>` before
+  stopping the process tree.
 - Stop marks primary launcher state as `stopped` and `owned: false`; it does
   not close remote TUI windows, archive threads, or alter user global MCP
   configuration.
@@ -378,8 +414,9 @@ Phase 9 adds project bootstrap:
   Server and MCP startup.
 - If the local package entrypoint is missing, `init` runs a project-local npm
   install with `--ignore-scripts --no-audit --no-fund --cache ./.npm-cache`.
-- `AGENTS.md` gets a small managed block by default and can be skipped with
-  `--no-agents`.
+- `init` does not create or update `AGENTS.md`. Agent-facing guidance lives in
+  the MCP surface through `codex_session_manager_help` and read-only resources
+  so it travels with the server instead of mutating the consumer project.
 - `init --install-shell-hook` is the explicit exception to the project-scoped
   default: it installs or refreshes the marked `codex` function hook for
   PowerShell, bash, or zsh so plain `codex` launches can enter the managed
@@ -391,6 +428,24 @@ Phase 9 adds project bootstrap:
   plus terminal/managed remote sessions remains the minimum supported native
   integration.
 
+Phase 11 adds an explicit user-global opt-in without changing the default:
+
+- `codex-agent-session-manager global install --confirm` manages a marked
+  block in the user's `~/.codex/config.toml` and a marked shell profile hook.
+- `--mcp-only` limits the operation to the global MCP block;
+  `--shell-hook-only` limits it to the global `codex` function hook.
+- `global uninstall --confirm` removes only the marked global MCP block and/or
+  marked shell hook block. Unmanaged `codex_agent_session_manager` config
+  sections are reported as conflicts and are not rewritten.
+- On Windows, the user-global MCP block uses
+  `~/.codex-agent-session-manager/windows-hidden-stdio-launcher.exe` to avoid
+  visible stdio helper consoles.
+- The global MCP makes the guidance tool and session-manager tools available
+  across projects. The global shell hook routes initialized projects through
+  their generated local supervisor when present; otherwise it routes plain
+  Codex-shaped launches through `codex-agent-session-manager remote --workspace
+  <cwd>` and delegates native Codex subcommands to the real CLI.
+
 Post-alpha replay hardening adds an opt-in plain-`codex` self-management
 fallback:
 
@@ -400,9 +455,12 @@ fallback:
   `codex-agent-session-manager remote`. This preserves compatibility with
   external launchers that run `codex` in a project directory while still
   creating managed App Server state and a `--remote` TUI.
-- The local supervisor supports the common Codex-shaped forms
-  `codex "<prompt>"` and `codex resume <threadId> "<prompt>"` by translating
-  them to managed `remote --prompt` / `remote --resume ... --prompt`.
+- The local supervisor supports Codex-shaped interactive launches such as
+  `codex [flags] [prompt]` by passing native Codex argv through
+  `codex-agent-session-manager remote -- ...`. The wrapper injects only the
+  managed App Server URL and workspace defaults, so flags such as `--model`,
+  `--search`, and `--dangerously-bypass-approvals-and-sandbox` keep Codex
+  semantics.
 - Native Codex subcommands and flags such as `codex mcp list`,
   `codex login`, `codex --version`, and `codex --help` are delegated to the
   real Codex CLI instead of being forwarded to `codex-agent-session-manager
@@ -415,8 +473,9 @@ fallback:
   thread by default, then attempts to stop the old TUI root process tree.
   `handoffMode: "shell-resume-next"` instead writes managed-remote state for
   the shell hook, which relaunches through `codex-agent-session-manager remote`
-  in the same terminal. If no thread id is inferable, the tool refuses unless
-  the caller explicitly selects `resumeMode: "fresh"`.
+  in the same terminal using explicit manager-owned `--resume`/`--prompt`
+  arguments. If no thread id is inferable, the tool refuses unless the caller
+  explicitly selects `resumeMode: "fresh"`.
 - The relaunched Codex process receives the prompt through the Codex CLI
   argument surface. This is acceptable only for non-secret operator text and is
   why the tool remains a hard fallback rather than the default refresh path.

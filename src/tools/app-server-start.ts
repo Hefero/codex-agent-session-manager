@@ -20,6 +20,7 @@ export const appServerStartInputSchema = {
   appServerUrl: z.string().optional().describe('Optional loopback App Server websocket URL. If omitted, primary workspace state is reused, then an automatic local port is selected.'),
   host: z.string().optional().describe('Loopback host used when selecting a port. Defaults to 127.0.0.1.'),
   port: z.string().optional().describe('Port number or auto. If omitted, primary workspace state is reused, then an automatic port is selected.'),
+  appServerArgs: z.array(z.string()).optional().describe('Native codex app-server arguments appended after managed --listen/defaults. Do not include --listen or --stdio; use appServerUrl/host/port instead.'),
   enableImageGeneration: z.boolean().optional().describe('When true, does not pass --disable image_generation to App Server.'),
   dryRun: z.boolean().optional().describe('Defaults true. When true, only returns the start/reuse plan.'),
   confirm: z.boolean().optional().describe('Required true when dryRun is false.'),
@@ -33,6 +34,7 @@ export interface AppServerStartOperationInput {
   appServerUrl: string;
   workspace: string;
   enableImageGeneration?: boolean;
+  appServerArgs?: string[];
 }
 
 export interface AppServerStartBackgroundEvidence {
@@ -63,6 +65,7 @@ function requestedEvidence(input: {
   port?: string | undefined;
   workspace: string;
   enableImageGeneration?: boolean | undefined;
+  appServerArgs?: readonly string[] | undefined;
 }): Record<string, unknown> {
   return {
     appServerUrl: input.appServerUrl ? redactSensitiveText(input.appServerUrl) : null,
@@ -70,6 +73,7 @@ function requestedEvidence(input: {
     port: input.port ?? null,
     workspacePreview: '<workspace>',
     enableImageGeneration: input.enableImageGeneration === true,
+    appServerArgs: input.appServerArgs ?? [],
     startsOrReusesAppServer: true,
   };
 }
@@ -78,6 +82,7 @@ function operationInputForPlan(input: {
   operationId: string;
   plan: RemotePlan;
   enableImageGeneration?: boolean | undefined;
+  appServerArgs?: readonly string[] | undefined;
 }): AppServerStartOperationInput {
   const operationInput: AppServerStartOperationInput = {
     operationId: input.operationId,
@@ -85,6 +90,7 @@ function operationInputForPlan(input: {
     workspace: input.plan.workspace,
   };
   if (input.enableImageGeneration !== undefined) operationInput.enableImageGeneration = input.enableImageGeneration;
+  if (input.appServerArgs !== undefined) operationInput.appServerArgs = [...input.appServerArgs];
   return operationInput;
 }
 
@@ -99,6 +105,9 @@ export function buildAppServerStartOperationArgs(input: AppServerStartOperationI
     input.workspace,
   ];
   if (input.enableImageGeneration === true) args.push('--enable-image-generation');
+  for (const arg of input.appServerArgs ?? []) {
+    args.push('--app-server-arg', arg);
+  }
   return args;
 }
 
@@ -107,6 +116,7 @@ export function parseAppServerStartOperationArgs(argv: readonly string[]): AppSe
   let appServerUrl: string | undefined;
   let workspace: string | undefined;
   let enableImageGeneration: boolean | undefined;
+  const appServerArgs: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -122,6 +132,9 @@ export function parseAppServerStartOperationArgs(argv: readonly string[]): AppSe
       index += 1;
     } else if (arg === '--enable-image-generation') {
       enableImageGeneration = true;
+    } else if (arg === '--app-server-arg' && value !== undefined) {
+      appServerArgs.push(value);
+      index += 1;
     } else {
       throw new Error(`Unknown or incomplete ${INTERNAL_COMMAND} argument: ${arg ?? '<missing>'}`);
     }
@@ -137,6 +150,7 @@ export function parseAppServerStartOperationArgs(argv: readonly string[]): AppSe
     workspace: resolveWorkspaceRoot(workspace),
   };
   if (enableImageGeneration !== undefined) operationInput.enableImageGeneration = enableImageGeneration;
+  if (appServerArgs.length > 0) operationInput.appServerArgs = appServerArgs;
   return operationInput;
 }
 
@@ -182,6 +196,7 @@ export async function buildAppServerStartPayload(
     port: input.port,
     workspace,
     enableImageGeneration: input.enableImageGeneration,
+    appServerArgs: input.appServerArgs,
   });
   const remoteOptions: RemoteOptions = {
     workspace,
@@ -192,6 +207,7 @@ export async function buildAppServerStartPayload(
   if (input.host !== undefined) remoteOptions.host = input.host;
   if (input.port !== undefined) remoteOptions.port = input.port;
   if (input.enableImageGeneration !== undefined) remoteOptions.enableImageGeneration = input.enableImageGeneration;
+  if (input.appServerArgs !== undefined) remoteOptions.appServerArgs = input.appServerArgs;
   const plan = await planBuilder(remoteOptions, deps.remoteDeps);
   const planPreview = remotePlanPreview(plan);
 
@@ -229,6 +245,7 @@ export async function buildAppServerStartPayload(
       operationId: operation.id,
       plan,
       enableImageGeneration: input.enableImageGeneration,
+      appServerArgs: input.appServerArgs,
     }));
     const updatedOperation =
       store.update(operation.id, {
@@ -277,6 +294,7 @@ export async function runAppServerStartOperation(
           noResume: true,
         };
         if (input.enableImageGeneration !== undefined) remoteOptions.enableImageGeneration = input.enableImageGeneration;
+        if (input.appServerArgs !== undefined) remoteOptions.appServerArgs = input.appServerArgs;
         return remoteOptions;
       })(),
       deps.remoteDeps,

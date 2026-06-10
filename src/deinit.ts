@@ -19,8 +19,6 @@ const TOML_MARKER_START = '# BEGIN codex-agent-session-manager';
 const TOML_MARKER_END = '# END codex-agent-session-manager';
 const MCP_ADD_MARKER_PREFIX = '# BEGIN codex-agent-session-manager:mcp-add:';
 const MCP_ADD_MARKER_END = '# END codex-agent-session-manager:mcp-add';
-const AGENTS_MARKER_START = '<!-- codex-agent-session-manager:start -->';
-const AGENTS_MARKER_END = '<!-- codex-agent-session-manager:end -->';
 
 const GENERATED_SCRIPTS: Record<string, string> = {
   'codex:init': `${packageName} init`,
@@ -28,7 +26,8 @@ const GENERATED_SCRIPTS: Record<string, string> = {
   'codex:remote': `${packageName} remote`,
   'codex:remote:dry-run': `${packageName} remote --dry-run --no-resume`,
   'codex:app-server:status': `${packageName} app-server status`,
-  'codex:app-server:stop': `${packageName} app-server stop --dry-run`,
+  'codex:app-server:stop': `${packageName} app-server stop --confirm`,
+  'codex:app-server:stop:dry-run': `${packageName} app-server stop --dry-run`,
 };
 
 type DeinitActionKind = 'delete' | 'update' | 'noop' | 'skip';
@@ -81,7 +80,7 @@ Options:
   --confirm              Apply the teardown plan.
   --json                 Print machine-readable JSON output.
   --remove-runtime       Remove local .codex-agent-session-manager/ runtime state.
-  --remove-added-mcps    Remove MCP server blocks created by "mcp add npm".
+  --remove-added-mcps    Remove MCP server blocks created by "mcp local add npm".
   --remove-empty-npm-project
                          Remove package.json, package-lock.json, and node_modules
                          only when package.json has no unmanaged dependencies
@@ -193,10 +192,9 @@ function stripBom(content: string): string {
   return content.startsWith('\uFEFF') ? content.slice(1) : content;
 }
 
-function finalizeFileContent(path: string, content: string): string | null {
+function finalizeFileContent(content: string): string | null {
   const trimmed = content.trim();
   if (trimmed.length === 0) return null;
-  if (path.endsWith('AGENTS.md') && trimmed === '# Project Agent Notes') return null;
   return ensureTrailingNewline(content.trimEnd());
 }
 
@@ -251,7 +249,7 @@ function removeManagedMcpConfig(content: string | null, removeAddedMcps: boolean
   }
 
   return {
-    next: finalizeFileContent('config.toml', next),
+    next: finalizeFileContent(next),
     removedAddedPackages: [...removedAddedPackages].sort(),
     removedAddedCount,
   };
@@ -272,13 +270,7 @@ function removeGeneratedGitignoreEntry(content: string | null): string | null {
       && trimmed !== PRIMARY_STATE_DIR_NAME
       && trimmed !== '.npm-cache/';
   });
-  return finalizeFileContent('.gitignore', kept.join('\n'));
-}
-
-function removeGeneratedAgentsBlock(content: string | null): string | null {
-  if (content === null) return null;
-  const removed = removeMarkedBlock(content, AGENTS_MARKER_START, AGENTS_MARKER_END);
-  return removed === null ? content : finalizeFileContent('AGENTS.md', removed);
+  return finalizeFileContent(kept.join('\n'));
 }
 
 function removeGeneratedPackageScripts(content: string | null): string | null {
@@ -492,16 +484,6 @@ export function buildDeinitPlan(options: ParsedDeinitArgs = {}): DeinitPlan {
       });
     }
   }
-
-  const agentsPath = workspacePath(workspace, 'AGENTS.md');
-  const agentsCurrent = readTextIfExists(agentsPath);
-  maybeAddFileUpdate(
-    plan,
-    agentsPath,
-    agentsCurrent,
-    removeGeneratedAgentsBlock(agentsCurrent),
-    'remove agent operating notes',
-  );
 
   addRuntimeAction(plan, options.removeRuntime === true);
   const codexDirPath = workspacePath(workspace, '.codex');

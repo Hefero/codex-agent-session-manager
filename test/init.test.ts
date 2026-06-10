@@ -12,6 +12,17 @@ function tempWorkspace(): string {
   return mkdtempSync(join(tmpdir(), 'codex-agent-session-manager-init-'));
 }
 
+function availablePowerShellCommands(): string[] {
+  if (process.platform !== 'win32') return [];
+  return ['powershell.exe', 'pwsh.exe'].filter((command) => {
+    const result = spawnSync(command, ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    return result.status === 0;
+  });
+}
+
 function fakeInstaller(workspace: string): { npmInstaller(input: { workspace: string; args: string[] }): { status: number; stdout: string; stderr: string } } {
   return {
     npmInstaller(input) {
@@ -29,20 +40,25 @@ function fakeInstaller(workspace: string): { npmInstaller(input: { workspace: st
       const distDir = join(workspace, 'node_modules', packageName, 'dist');
       mkdirSync(distDir, { recursive: true });
       writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+      writeFileSync(join(workspace, 'node_modules', packageName, 'package.json'), `${JSON.stringify({
+        name: packageName,
+        version: packageVersion,
+      }, null, 2)}\n`);
       return { status: 0, stdout: '', stderr: '' };
     },
   };
 }
 
-test('parseInitArgs maps dry-run, workspace, json, agents opt-out, and shell hook opt-in', () => {
-  assert.deepEqual(parseInitArgs(['--workspace', 'project-a', '--dry-run', '--json', '--no-agents', '--install-shell-hook', '--shell-hook-shell', 'bash', '--shell-hook-profile', 'profile.sh']), {
+test('parseInitArgs maps dry-run, workspace, package spec, json, and shell hook opt-in', () => {
+  assert.deepEqual(parseInitArgs(['--workspace', 'project-a', '--package-spec', './package.tgz', '--dry-run', '--json', '--install-shell-hook', '--shell-hook-shell', 'bash', '--shell-hook-profile', 'profile.sh', '--shell-hook-wsl-prefer-linux-path']), {
     workspace: 'project-a',
+    packageSpec: './package.tgz',
     dryRun: true,
     json: true,
-    agents: false,
     installShellHook: true,
     shellHookShell: 'bash',
     shellHookProfile: 'profile.sh',
+    shellHookWslPreferLinuxPath: true,
   });
 
   assert.throws(
@@ -52,6 +68,10 @@ test('parseInitArgs maps dry-run, workspace, json, agents opt-out, and shell hoo
   assert.throws(
     () => parseInitArgs(['--shell-hook-shell', 'bash']),
     /--shell-hook-shell requires --install-shell-hook/u,
+  );
+  assert.throws(
+    () => parseInitArgs(['--shell-hook-wsl-prefer-linux-path']),
+    /--shell-hook-wsl-prefer-linux-path requires --install-shell-hook/u,
   );
 });
 
@@ -118,7 +138,7 @@ test('init shell hook opt-in is dry-run safe and redacts profile target', async 
   }
 });
 
-test('applyInitPlan creates project config, package scripts, gitignore, and AGENTS notes idempotently', () => {
+test('applyInitPlan creates project config, package scripts, and gitignore idempotently without AGENTS.md', () => {
   const workspace = tempWorkspace();
   try {
     writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
@@ -161,16 +181,18 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.match(shellCodex, /managed-remote/u);
     assert.match(shellCodex, /--no-bypass-sandbox/u);
     assert.match(shellCodex, /@\('remote'\)/u);
-    assert.doesNotMatch(shellCodex, /--dangerously-bypass-approvals-and-sandbox/u);
+    assert.match(shellCodex, /Test-CodexNativeSubcommand/u);
+    assert.match(shellCodex, /Test-CodexManagerOnlyArg/u);
     assert.doesNotMatch(shellCodex, /Resolve-CodexAgentSessionManagerRealCodex/u);
 
     const posixCodex = readFileSync(join(workspace, '.codex-agent-session-manager', 'shell', 'codex.mjs'), 'utf8');
     assert.match(posixCodex, /convertCodexArgsToManagedRemoteArgs/u);
     assert.match(posixCodex, /convertShellResumeStateToManagedRemoteArgs/u);
     assert.match(posixCodex, /shouldDelegateToRealCodex/u);
+    assert.match(posixCodex, /isCodexNativeSubcommand/u);
+    assert.match(posixCodex, /isCodexManagerOnlyArg/u);
     assert.match(posixCodex, /resolveRealCodexCli/u);
     assert.match(posixCodex, /remote', \.\.\.remoteArgs/u);
-    assert.doesNotMatch(posixCodex, /dangerously-bypass-approvals-and-sandbox/u);
 
     const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
       scripts?: Record<string, string>;
@@ -181,25 +203,116 @@ test('applyInitPlan creates project config, package scripts, gitignore, and AGEN
     assert.equal(packageJson.scripts?.['codex:remote'], `${packageName} remote`);
     assert.equal(packageJson.scripts?.['codex:remote:dry-run'], `${packageName} remote --dry-run --no-resume`);
     assert.equal(packageJson.scripts?.['codex:app-server:status'], `${packageName} app-server status`);
-    assert.equal(packageJson.scripts?.['codex:app-server:stop'], `${packageName} app-server stop --dry-run`);
+    assert.equal(packageJson.scripts?.['codex:app-server:stop'], `${packageName} app-server stop --confirm`);
+    assert.equal(packageJson.scripts?.['codex:app-server:stop:dry-run'], `${packageName} app-server stop --dry-run`);
     assert.equal(packageJson.devDependencies?.[packageName], packageVersion);
 
-    const agents = readFileSync(join(workspace, 'AGENTS.md'), 'utf8');
-    assert.match(agents, /codex-agent-session-manager:start/u);
-    assert.match(agents, /MCP callable-catalog validation/u);
-    assert.match(agents, /mcp add npm <package-spec>/u);
-    assert.match(agents, /Prefer read-only scopes first/u);
-    assert.match(agents, /Do not patch files under `node_modules`/u);
-    assert.match(agents, /Do not validate by launching stdio MCP entrypoints/u);
-    assert.match(agents, /orphan node\/cmd windows/u);
-    assert.match(agents, /If env vars were created or changed after App Server started/u);
-    assert.match(agents, /keep using `codex-agent-session-manager mcp refresh --thread-id <thread-id>`/u);
-    assert.match(agents, /Direct MCP SDK calls\s+are diagnostic only/u);
-    assert.match(agents, /When scheduling a continuation for the current thread/u);
-    assert.match(agents, /do not call\s+`codex_operation_wait` or `codex_operation_read` from that same active turn/u);
+    assert.equal(existsSync(join(workspace, 'AGENTS.md')), false);
 
     const second = buildInitPlan({ workspace });
     assert.equal(second.fileUpdates.length, 0);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('init can install from an explicit package spec for unpublished tarball testing', () => {
+  const workspace = tempWorkspace();
+  const packageSpec = '/tmp/codex-agent-session-manager-0.1.0-alpha.7.tgz';
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+
+    const plan = buildInitPlan({ workspace, packageSpec });
+    assert.ok(plan.actions.some((action) => action.kind === 'run' && action.command?.includes(packageSpec)));
+
+    const installedArgs: string[][] = [];
+    applyInitPlan(plan, {
+      npmInstaller(input) {
+        installedArgs.push(input.args);
+        const distDir = join(workspace, 'node_modules', packageName, 'dist');
+        mkdirSync(distDir, { recursive: true });
+        writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    });
+
+    assert.deepEqual(installedArgs, [[
+      'install',
+      '--save-dev',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--cache',
+      './.npm-cache',
+      packageSpec,
+    ]]);
+    const packageJson = JSON.parse(readFileSync(join(workspace, 'package.json'), 'utf8')) as {
+      devDependencies?: Record<string, string>;
+    };
+    assert.equal(packageJson.devDependencies?.[packageName], packageSpec);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('init reinstalls when an explicit package spec is supplied over an existing local package', () => {
+  const workspace = tempWorkspace();
+  const packageSpec = '/tmp/codex-agent-session-manager-0.1.0-alpha.7.tgz';
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({
+      name: 'target-project',
+      devDependencies: {
+        [packageName]: '0.1.0-alpha.6',
+      },
+    }, null, 2)}\n`);
+    const distDir = join(workspace, 'node_modules', packageName, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(workspace, 'node_modules', packageName, 'package.json'), `${JSON.stringify({
+      name: packageName,
+      version: packageVersion,
+    }, null, 2)}\n`);
+
+    const plan = buildInitPlan({ workspace, packageSpec });
+    assert.ok(plan.actions.some((action) => action.kind === 'run' && action.command?.includes(packageSpec)));
+
+    const packageUpdate = plan.fileUpdates.find((update) => update.path === join(workspace, 'package.json'));
+    assert.ok(packageUpdate);
+    const packageJson = JSON.parse(packageUpdate.content) as {
+      devDependencies?: Record<string, string>;
+    };
+    assert.equal(packageJson.devDependencies?.[packageName], packageSpec);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('init reinstalls when the existing local package version is stale', () => {
+  const workspace = tempWorkspace();
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({
+      name: 'target-project',
+      devDependencies: {
+        [packageName]: '0.1.0-alpha.6',
+      },
+    }, null, 2)}\n`);
+    const distDir = join(workspace, 'node_modules', packageName, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(join(distDir, 'cli.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(workspace, 'node_modules', packageName, 'package.json'), `${JSON.stringify({
+      name: packageName,
+      version: '0.1.0-alpha.6',
+    }, null, 2)}\n`);
+
+    const plan = buildInitPlan({ workspace });
+    assert.ok(plan.actions.some((action) => action.kind === 'run' && action.command?.includes(`${packageName}@${packageVersion}`)));
+
+    const packageUpdate = plan.fileUpdates.find((update) => update.path === join(workspace, 'package.json'));
+    assert.ok(packageUpdate);
+    const packageJson = JSON.parse(packageUpdate.content) as {
+      devDependencies?: Record<string, string>;
+    };
+    assert.equal(packageJson.devDependencies?.[packageName], packageVersion);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -289,7 +402,7 @@ process.exit(0);
       call[workspaceIndex + 1] = '<workspace>';
     }
     assert.deepEqual(calls, [
-      ['remote', '--workspace', '<workspace>', '--prompt', 'initial posix prompt'],
+      ['remote', '--workspace', '<workspace>', '--', 'initial posix prompt'],
       [
         'remote',
         '--workspace',
@@ -307,10 +420,92 @@ process.exit(0);
   }
 });
 
-test('init creates package metadata when package.json is absent and honors --no-agents', () => {
+test('generated POSIX supervisor routes native sandbox bypass flag through managed remote', () => {
   const workspace = tempWorkspace();
   try {
-    const plan = buildInitPlan({ workspace, agents: false });
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv-posix-bypass.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + '\\n');
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.mjs');
+    const result = spawnSync(process.execPath, [supervisor, '--dangerously-bypass-approvals-and-sandbox', 'initial posix prompt'], {
+      cwd: workspace,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const call = JSON.parse(readFileSync(logPath, 'utf8').trim()) as string[];
+    const workspaceIndex = call.indexOf('--workspace');
+    assert.notEqual(workspaceIndex, -1);
+    assert.equal(realpathSync.native(call[workspaceIndex + 1] ?? ''), realpathSync.native(workspace));
+    call[workspaceIndex + 1] = '<workspace>';
+    assert.deepEqual(call, ['remote', '--workspace', '<workspace>', '--', '--dangerously-bypass-approvals-and-sandbox', 'initial posix prompt']);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('generated POSIX supervisor routes managed no-bypass flag through managed remote', () => {
+  const workspace = tempWorkspace();
+  try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv-posix-no-bypass.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + '\\n');
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.mjs');
+    const result = spawnSync(process.execPath, [supervisor, '--no-bypass-sandbox', 'initial posix prompt'], {
+      cwd: workspace,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const call = JSON.parse(readFileSync(logPath, 'utf8').trim()) as string[];
+    const workspaceIndex = call.indexOf('--workspace');
+    assert.notEqual(workspaceIndex, -1);
+    assert.equal(realpathSync.native(call[workspaceIndex + 1] ?? ''), realpathSync.native(workspace));
+    call[workspaceIndex + 1] = '<workspace>';
+    assert.deepEqual(call, ['remote', '--workspace', '<workspace>', '--no-bypass-sandbox', '--', 'initial posix prompt']);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('init creates package metadata when package.json is absent and never writes AGENTS.md', () => {
+  const workspace = tempWorkspace();
+  try {
+    const plan = buildInitPlan({ workspace });
     applyInitPlan(plan, fakeInstaller(workspace));
 
     assert.equal(existsSync(join(workspace, 'package.json')), true);
@@ -336,7 +531,7 @@ test('init creates package metadata when package.json is absent and honors --no-
     assert.equal(existsSync(join(workspace, '.gitignore')), true);
     assert.ok(plan.actions.some((action) => action.kind === 'create' && action.target.endsWith('package.json')));
     assert.ok(plan.actions.some((action) => action.kind === 'run' && action.command?.[0] === 'npm'));
-    assert.ok(plan.actions.some((action) => action.kind === 'skip' && action.target.endsWith('AGENTS.md')));
+    assert.equal(plan.actions.some((action) => action.target.endsWith('AGENTS.md')), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -361,13 +556,15 @@ test('init accepts package.json with UTF-8 BOM', () => {
 });
 
 test('generated PowerShell supervisor consumes shell resume-next state through managed remote', (t) => {
-  if (process.platform !== 'win32') {
+  const shellCommands = availablePowerShellCommands();
+  if (shellCommands.length === 0) {
     t.skip('PowerShell supervisor replay is Windows-only');
     return;
   }
 
-  const workspace = tempWorkspace();
-  try {
+  for (const shellCommand of shellCommands) {
+    const workspace = tempWorkspace();
+    try {
     writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
     const plan = buildInitPlan({ workspace });
     applyInitPlan(plan, fakeInstaller(workspace));
@@ -410,19 +607,19 @@ process.exit(0);
 
     const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
     const result = spawnSync(
-      'powershell.exe',
+      shellCommand,
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor, 'initial prompt'],
       { cwd: workspace, encoding: 'utf8', windowsHide: true },
     );
 
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.status, 0, `${shellCommand}\n${result.stdout}\n${result.stderr}`);
     const calls = readFileSync(logPath, 'utf8')
       .trim()
       .split(/\r?\n/u)
       .map((line) => JSON.parse(line) as string[]);
     const expectedWorkspace = realpathSync.native(workspace);
     assert.deepEqual(calls, [
-      ['remote', '--workspace', expectedWorkspace, '--prompt', 'initial prompt'],
+      ['remote', '--workspace', expectedWorkspace, '--', 'initial prompt'],
       [
         'remote',
         '--workspace',
@@ -436,19 +633,157 @@ process.exit(0);
       ],
     ]);
     assert.doesNotMatch(JSON.stringify(calls), /--dangerously-bypass-approvals-and-sandbox|--disable|js_repl|"-C"/u);
-  } finally {
-    rmSync(workspace, { recursive: true, force: true });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   }
 });
 
-test('generated PowerShell supervisor delegates native Codex subcommands to the real CLI', (t) => {
-  if (process.platform !== 'win32') {
+test('generated PowerShell supervisor routes no-arg codex without empty prompt', (t) => {
+  const shellCommands = availablePowerShellCommands();
+  if (shellCommands.length === 0) {
     t.skip('PowerShell supervisor replay is Windows-only');
     return;
   }
 
-  const workspace = tempWorkspace();
-  try {
+  for (const shellCommand of shellCommands) {
+    const workspace = tempWorkspace();
+    try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv-noargs.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + '\\n');
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
+    const result = spawnSync(
+      shellCommand,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor],
+      { cwd: workspace, encoding: 'utf8', windowsHide: true },
+    );
+
+    assert.equal(result.status, 0, `${shellCommand}\n${result.stdout}\n${result.stderr}`);
+    const call = JSON.parse(readFileSync(logPath, 'utf8').trim()) as string[];
+    assert.deepEqual(call, ['remote', '--workspace', realpathSync.native(workspace)]);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+});
+
+test('generated PowerShell supervisor routes native sandbox bypass flag through managed remote', (t) => {
+  const shellCommands = availablePowerShellCommands();
+  if (shellCommands.length === 0) {
+    t.skip('PowerShell supervisor replay is Windows-only');
+    return;
+  }
+
+  for (const shellCommand of shellCommands) {
+    const workspace = tempWorkspace();
+    try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv-bypass.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + '\\n');
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
+    const result = spawnSync(
+      shellCommand,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor, '--dangerously-bypass-approvals-and-sandbox', 'initial prompt'],
+      { cwd: workspace, encoding: 'utf8', windowsHide: true },
+    );
+
+    assert.equal(result.status, 0, `${shellCommand}\n${result.stdout}\n${result.stderr}`);
+    const call = JSON.parse(readFileSync(logPath, 'utf8').trim()) as string[];
+    assert.deepEqual(call, ['remote', '--workspace', realpathSync.native(workspace), '--', '--dangerously-bypass-approvals-and-sandbox', 'initial prompt']);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+});
+
+test('generated PowerShell supervisor routes managed no-bypass flag through managed remote', (t) => {
+  const shellCommands = availablePowerShellCommands();
+  if (shellCommands.length === 0) {
+    t.skip('PowerShell supervisor replay is Windows-only');
+    return;
+  }
+
+  for (const shellCommand of shellCommands) {
+    const workspace = tempWorkspace();
+    try {
+    writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
+    const plan = buildInitPlan({ workspace });
+    applyInitPlan(plan, fakeInstaller(workspace));
+
+    const logPath = join(workspace, 'remote-argv-no-bypass.jsonl');
+    const localCli = join(workspace, 'node_modules', packageName, 'dist', 'cli.js');
+    writeFileSync(
+      localCli,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'remote' && args[1] === '--help') {
+  console.log('remote help with --prompt');
+  process.exit(0);
+}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + '\\n');
+process.exit(0);
+`,
+    );
+
+    const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
+    const result = spawnSync(
+      shellCommand,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor, '--no-bypass-sandbox', 'initial prompt'],
+      { cwd: workspace, encoding: 'utf8', windowsHide: true },
+    );
+
+    assert.equal(result.status, 0, `${shellCommand}\n${result.stdout}\n${result.stderr}`);
+    const call = JSON.parse(readFileSync(logPath, 'utf8').trim()) as string[];
+    assert.deepEqual(call, ['remote', '--workspace', realpathSync.native(workspace), '--no-bypass-sandbox', '--', 'initial prompt']);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+});
+
+test('generated PowerShell supervisor delegates native Codex subcommands to the real CLI', (t) => {
+  const shellCommands = availablePowerShellCommands();
+  if (shellCommands.length === 0) {
+    t.skip('PowerShell supervisor replay is Windows-only');
+    return;
+  }
+
+  for (const shellCommand of shellCommands) {
+    const workspace = tempWorkspace();
+    try {
     writeFileSync(join(workspace, 'package.json'), `${JSON.stringify({ name: 'target-project' }, null, 2)}\n`);
     const plan = buildInitPlan({ workspace });
     applyInitPlan(plan, fakeInstaller(workspace));
@@ -464,7 +799,7 @@ test('generated PowerShell supervisor delegates native Codex subcommands to the 
 
     const supervisor = join(workspace, '.codex-agent-session-manager', 'shell', 'codex.ps1');
     const result = spawnSync(
-      'powershell.exe',
+      shellCommand,
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', supervisor, 'mcp', 'list'],
       {
         cwd: workspace,
@@ -478,10 +813,11 @@ test('generated PowerShell supervisor delegates native Codex subcommands to the 
       },
     );
 
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.status, 0, `${shellCommand}\n${result.stdout}\n${result.stderr}`);
     assert.equal(readFileSync(logPath, 'utf8').trim(), 'mcp list');
-  } finally {
-    rmSync(workspace, { recursive: true, force: true });
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   }
 });
 

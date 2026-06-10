@@ -96,7 +96,8 @@ function expectedGeneratedScripts(): Record<string, string> {
     'codex:remote': 'codex-agent-session-manager remote',
     'codex:remote:dry-run': 'codex-agent-session-manager remote --dry-run --no-resume',
     'codex:app-server:status': 'codex-agent-session-manager app-server status',
-    'codex:app-server:stop': 'codex-agent-session-manager app-server stop --dry-run',
+    'codex:app-server:stop': 'codex-agent-session-manager app-server stop --confirm',
+    'codex:app-server:stop:dry-run': 'codex-agent-session-manager app-server stop --dry-run',
   };
 }
 
@@ -127,9 +128,8 @@ function validateInstalledProject(targetWorkspace: string): void {
     throw new Error('Generated .gitignore did not include .codex-agent-session-manager/.');
   }
 
-  const agents = readFileSync(join(targetWorkspace, 'AGENTS.md'), 'utf8');
-  if (!agents.includes('codex-agent-session-manager:start') || !agents.includes('MCP callable-catalog validation')) {
-    throw new Error('Generated AGENTS.md did not include the managed session-manager block.');
+  if (existsSync(join(targetWorkspace, 'AGENTS.md'))) {
+    throw new Error('init unexpectedly created AGENTS.md.');
   }
 
   const scripts = scriptMap(readJson(join(targetWorkspace, 'package.json')));
@@ -151,11 +151,6 @@ function validateDeinitializedProject(targetWorkspace: string): void {
   const gitignorePath = join(targetWorkspace, '.gitignore');
   if (existsSync(gitignorePath) && readFileSync(gitignorePath, 'utf8').includes('.codex-agent-session-manager/')) {
     throw new Error('deinit did not remove the runtime gitignore entry.');
-  }
-
-  const agentsPath = join(targetWorkspace, 'AGENTS.md');
-  if (existsSync(agentsPath) && readFileSync(agentsPath, 'utf8').includes('codex-agent-session-manager:start')) {
-    throw new Error('deinit did not remove the managed AGENTS.md block.');
   }
 
   const scripts = scriptMap(readJson(join(targetWorkspace, 'package.json')));

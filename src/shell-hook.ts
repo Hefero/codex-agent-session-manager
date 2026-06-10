@@ -10,6 +10,8 @@ export interface ParsedShellHookArgs {
   subcommand?: 'install' | 'uninstall' | 'status';
   profile?: string;
   shell?: ShellHookShell;
+  globalRemoteFallback?: boolean;
+  wslPreferLinuxPath?: boolean;
   dryRun?: boolean;
   confirm?: boolean;
   help?: boolean;
@@ -22,6 +24,8 @@ export interface ShellHookPlan {
   shell: ShellHookShell;
   profilePath: string;
   installed: boolean;
+  globalRemoteFallback: boolean;
+  wslPreferLinuxPath: boolean;
   actions: Array<{ kind: 'create' | 'update' | 'remove' | 'noop'; target: string; reason: string }>;
   nextContent?: string | undefined;
 }
@@ -39,6 +43,12 @@ function usage(): string {
 Options:
   --shell <name>     Shell hook type: powershell, bash, zsh, or auto. Defaults to auto.
   --profile <path>   Shell profile to edit. Defaults to the detected shell profile.
+  --global-remote-fallback
+                     When no initialized project supervisor exists, route plain
+                     codex launches through codex-agent-session-manager remote.
+  --wsl-prefer-linux-path
+                     POSIX-only opt-in. In WSL, prefer Linux npm binaries and
+                     refuse /mnt/c Windows shims for codex-agent-session-manager.
   --dry-run          Preview only. This is the default unless --confirm is passed.
   --confirm          Apply install/uninstall changes.
   --help             Show this help.
@@ -57,10 +67,33 @@ function inferShell(env: NodeJS.ProcessEnv = process.env, platform = process.pla
   return platform === 'darwin' ? 'zsh' : 'bash';
 }
 
+function defaultPowerShellProfilePath(env: NodeJS.ProcessEnv = process.env): string {
+  const userPowerShellModules = join(homedir(), 'Documents', 'PowerShell', 'Modules').toLowerCase();
+  const modulePaths = (env.PSModulePath ?? '').split(';').map((entry) => entry.toLowerCase());
+  const appearsToRunPowerShellCore = modulePaths.includes(userPowerShellModules)
+    || /\bpowershell_[0-9]/iu.test(env.PSHOME ?? '');
+  return appearsToRunPowerShellCore
+    ? join(homedir(), 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1')
+    : join(homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
+}
+
 function defaultProfilePath(shell: ShellHookShell, platform = process.platform): string {
-  if (shell === 'powershell') return join(homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
+  if (shell === 'powershell') return defaultPowerShellProfilePath();
   if (shell === 'zsh') return join(homedir(), '.zshrc');
   return platform === 'darwin' ? join(homedir(), '.bash_profile') : join(homedir(), '.bashrc');
+}
+
+function quotePowerShell(value: string): string {
+  return `'${value.replace(/'/gu, "''")}'`;
+}
+
+function quotePosix(value: string): string {
+  return `'${value.replace(/'/gu, "'\\''")}'`;
+}
+
+export function shellHookActivationCommand(shell: ShellHookShell, profilePath: string): string {
+  if (shell === 'powershell') return `. ${quotePowerShell(profilePath)}`;
+  return `source ${quotePosix(profilePath)}`;
 }
 
 function resolveProfilePath(profile: string | undefined, shell: ShellHookShell): string {
@@ -81,7 +114,7 @@ function findMarkerLine(content: string, marker: string, fromIndex = 0): number 
   while (true) {
     const index = content.indexOf(marker, searchIndex);
     if (index < 0) return -1;
-    const before = index === 0 || content[index - 1] === '\n';
+    const before = index === 0 || content[index - 1] === '\n' || (index === 1 && content.charCodeAt(0) === 0xFEFF);
     const afterIndex = index + marker.length;
     const after = afterIndex === content.length || content[afterIndex] === '\n' || content[afterIndex] === '\r';
     if (before && after) return index;
@@ -105,7 +138,112 @@ function appendBlock(content: string | null, block: string): string {
   return ensureTrailingNewline(`${content.trimEnd()}\n\n${block}`);
 }
 
-function powershellHookBlock(): string {
+function powershellGlobalRemoteFallbackBlock(): string {
+  return `
+  function Resolve-CodexAgentSessionManagerCli {
+    foreach ($name in @('codex-agent-session-manager.cmd', 'codex-agent-session-manager.exe', 'codex-agent-session-manager')) {
+      $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($null -ne $command) {
+        return $command.Source
+      }
+    }
+    throw 'Could not find codex-agent-session-manager on PATH.'
+  }
+
+  function Resolve-CodexRealCli {
+    foreach ($name in @('codex.cmd', 'codex.exe', 'codex')) {
+      $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($null -ne $command) {
+        return $command.Source
+      }
+    }
+    throw 'Could not find the real Codex CLI application on PATH.'
+  }
+
+  function Should-DelegateToRealCodex {
+    param([object[]] $InputArgs)
+
+    $raw = @(Convert-CodexInputArgsToRaw $InputArgs)
+    if ($raw.Count -eq 0) {
+      return $false
+    }
+    if ($raw.Count -eq 1 -and @('--help', '-h', '--version', '-V', 'help', 'version') -contains $raw[0]) {
+      return $true
+    }
+    if ($raw[0].StartsWith('-')) {
+      return $false
+    }
+    if ($raw[0] -eq 'resume') {
+      return $false
+    }
+    return Test-CodexNativeSubcommand $raw[0]
+  }
+
+  function Convert-CodexInputArgsToRaw {
+    param([object[]] $InputArgs)
+
+    $raw = @()
+    foreach ($arg in @($InputArgs)) {
+      if ($null -eq $arg) {
+        continue
+      }
+      $text = [string] $arg
+      if ($text.Length -eq 0) {
+        continue
+      }
+      $raw += $text
+    }
+    return $raw
+  }
+
+  function Test-CodexManagerOnlyArg {
+    param([string] $Arg)
+
+    return @('--no-bypass-sandbox', '--enable-image-generation', '--no-resume', '--dry-run', '--resume-last', '--pick') -contains $Arg
+  }
+
+  function Test-CodexNativeSubcommand {
+    param([string] $Arg)
+
+    return @('exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'mcp-server', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'archive', 'unarchive', 'fork', 'cloud', 'exec-server', 'features') -contains $Arg
+  }
+
+  function Convert-CodexArgsToManagedRemoteArgs {
+    param([object[]] $InputArgs, [string] $Workspace)
+
+    $raw = @(Convert-CodexInputArgsToRaw $InputArgs)
+    $managerArgs = @()
+    $codexArgs = @()
+    foreach ($arg in @($raw)) {
+      if (Test-CodexManagerOnlyArg $arg) {
+        $managerArgs += $arg
+      } else {
+        $codexArgs += $arg
+      }
+    }
+
+    $remoteArgs = @('--workspace', $Workspace) + @($managerArgs)
+    if ($codexArgs.Count -eq 0) {
+      return $remoteArgs
+    }
+    return @($remoteArgs + @('--') + $codexArgs)
+  }
+
+  $workspace = (Get-Item -LiteralPath (Get-Location)).FullName
+  if (Should-DelegateToRealCodex $CodexArgs) {
+    $realCodex = Resolve-CodexRealCli
+    & $realCodex @CodexArgs
+    return
+  }
+
+  $managerCli = Resolve-CodexAgentSessionManagerCli
+  $remoteArgs = Convert-CodexArgsToManagedRemoteArgs $CodexArgs $workspace
+  $invokeArgs = @('remote') + @($remoteArgs)
+  & $managerCli @invokeArgs
+  return`;
+}
+
+function powershellHookBlock(globalRemoteFallback: boolean): string {
   return `${MARKER_START}
 function global:codex {
   [CmdletBinding(PositionalBinding = $false)]
@@ -129,6 +267,8 @@ function global:codex {
     $current = $parent
   }
 
+${globalRemoteFallback ? powershellGlobalRemoteFallbackBlock() : ''}
+
   foreach ($name in @('codex.cmd', 'codex.exe', 'codex')) {
     $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $command) {
@@ -142,9 +282,139 @@ function global:codex {
 ${MARKER_END}`;
 }
 
-function posixHookBlock(): string {
+function posixWslPathPreferenceBlock(enabled: boolean): string {
+  if (!enabled) return '';
+  return `
+codex_asm_prefer_wsl_linux_path() {
+  if [ -z "\${WSL_DISTRO_NAME:-}" ] && ! grep -qi microsoft /proc/version 2>/dev/null; then
+    return 0
+  fi
+
+  local dir
+  for dir in "$HOME"/.nvm/versions/node/*/bin "$HOME/.local/bin" "/usr/local/bin" "/usr/bin"; do
+    if [ -d "$dir" ]; then
+      case ":$PATH:" in
+        *":$dir:"*) ;;
+        *) PATH="$dir:$PATH" ;;
+      esac
+    fi
+  done
+  export PATH
+  hash -r 2>/dev/null || true
+}
+
+codex_asm_prefer_wsl_linux_path
+
+`;
+}
+
+function posixManagerResolutionBlock(wslPreferLinuxPath: boolean): string {
+  if (!wslPreferLinuxPath) {
+    return `
+  codex_asm_find_manager() {
+    command -v codex-agent-session-manager
+  }
+`;
+  }
+
+  return `
+  codex_asm_is_windows_path() {
+    case "$1" in
+      /mnt/[A-Za-z]/*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  codex_asm_find_manager() {
+    local candidate resolved
+    if [ -n "\${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
+      for candidate in "$HOME"/.nvm/versions/node/*/bin/codex-agent-session-manager "$HOME/.local/bin/codex-agent-session-manager" "/usr/local/bin/codex-agent-session-manager" "/usr/bin/codex-agent-session-manager"; do
+        if [ -x "$candidate" ]; then
+          printf '%s\\n' "$candidate"
+          return 0
+        fi
+      done
+    fi
+
+    resolved="$(command -v codex-agent-session-manager 2>/dev/null || true)"
+    if [ -n "$resolved" ] && ! codex_asm_is_windows_path "$resolved"; then
+      printf '%s\\n' "$resolved"
+      return 0
+    fi
+
+    if [ -n "$resolved" ]; then
+      printf '%s\\n' "codex-agent-session-manager resolves to a Windows shim under /mnt/c. Install it inside WSL or run init with a Linux package spec before using the global shell hook." >&2
+    else
+      printf '%s\\n' "Could not find a Linux codex-agent-session-manager binary on PATH." >&2
+    fi
+    return 127
+  }
+`;
+}
+
+function posixGlobalRemoteFallbackBlock(wslPreferLinuxPath: boolean): string {
+  return `
+  codex_asm_should_delegate() {
+    if [ "$#" -eq 0 ]; then
+      return 1
+    fi
+    case "$1" in
+      --help|-h|--version|-V|help|version) return 0 ;;
+    esac
+
+    case "$1" in
+      -*) return 1 ;;
+    esac
+    if [ "$1" = "resume" ]; then
+      return 1
+    fi
+    case "$1" in
+      exec|e|review|login|logout|mcp|plugin|mcp-server|app-server|remote-control|app|completion|update|doctor|sandbox|debug|apply|a|archive|unarchive|fork|cloud|exec-server|features) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+${posixManagerResolutionBlock(wslPreferLinuxPath)}
+
+  codex_asm_remote() {
+    local workspace manager
+    workspace="\${PWD:-$(pwd)}"
+    manager="$(codex_asm_find_manager)" || return $?
+    local manager_flags codex_args arg
+    manager_flags=()
+    codex_args=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --no-bypass-sandbox|--enable-image-generation|--no-resume|--dry-run|--resume-last|--pick)
+          manager_flags+=("$1")
+          shift
+          ;;
+        *)
+          codex_args+=("$1")
+          shift
+          ;;
+      esac
+    done
+
+    if [ "\${#codex_args[@]}" -eq 0 ]; then
+      command "$manager" remote --workspace "$workspace" "\${manager_flags[@]}"
+      return $?
+    fi
+    command "$manager" remote --workspace "$workspace" "\${manager_flags[@]}" -- "\${codex_args[@]}"
+  }
+
+  if codex_asm_should_delegate "$@"; then
+    command codex "$@"
+    return $?
+  fi
+
+  codex_asm_remote "$@"
+  return $?`;
+}
+
+function posixHookBlock(globalRemoteFallback: boolean, wslPreferLinuxPath: boolean): string {
   return `${MARKER_START}
-codex() {
+${posixWslPathPreferenceBlock(wslPreferLinuxPath)}codex() {
   local current hook parent
   current="\${PWD:-$(pwd)}"
   while [ -n "$current" ]; do
@@ -161,13 +431,14 @@ codex() {
     current="$parent"
   done
 
-  command codex "$@"
+${globalRemoteFallback ? posixGlobalRemoteFallbackBlock(wslPreferLinuxPath) : '  command codex "$@"'}
+${globalRemoteFallback ? '' : ''}
 }
 ${MARKER_END}`;
 }
 
-function hookBlock(shell: ShellHookShell): string {
-  return shell === 'powershell' ? powershellHookBlock() : posixHookBlock();
+function hookBlock(shell: ShellHookShell, globalRemoteFallback: boolean, wslPreferLinuxPath: boolean): string {
+  return shell === 'powershell' ? powershellHookBlock(globalRemoteFallback) : posixHookBlock(globalRemoteFallback, wslPreferLinuxPath);
 }
 
 function shellLabel(shell: ShellHookShell): string {
@@ -217,6 +488,10 @@ function parseShellHookArgs(argv: readonly string[]): ParsedShellHookArgs {
       parsed.dryRun = true;
     } else if (name === '--confirm') {
       parsed.confirm = true;
+    } else if (name === '--global-remote-fallback') {
+      parsed.globalRemoteFallback = true;
+    } else if (name === '--wsl-prefer-linux-path') {
+      parsed.wslPreferLinuxPath = true;
     } else if (name === '--help' || name === '-h') {
       parsed.help = true;
     } else {
@@ -234,6 +509,8 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
   const current = readTextIfExists(profilePath);
   const installed = current !== null && findMarkerLine(current, MARKER_START) >= 0;
   const dryRun = subcommand === 'status' ? true : parsed.confirm !== true;
+  const globalRemoteFallback = parsed.globalRemoteFallback === true;
+  const wslPreferLinuxPath = parsed.wslPreferLinuxPath === true && shell !== 'powershell';
 
   if (subcommand === 'status') {
     return {
@@ -243,12 +520,14 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
       shell,
       profilePath,
       installed,
+      globalRemoteFallback,
+      wslPreferLinuxPath,
       actions: [{ kind: 'noop', target: profilePath, reason: installed ? 'shell hook is installed' : 'shell hook is not installed' }],
     };
   }
 
   if (subcommand === 'install') {
-    const block = hookBlock(shell);
+    const block = hookBlock(shell, globalRemoteFallback, wslPreferLinuxPath);
     const replaced = current === null ? null : replaceMarkedBlock(current, block);
     const nextContent = replaced ?? appendBlock(current, block);
     return {
@@ -258,6 +537,8 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
       shell,
       profilePath,
       installed,
+      globalRemoteFallback,
+      wslPreferLinuxPath,
       actions: [{
         kind: current === null ? 'create' : installed ? 'update' : 'update',
         target: profilePath,
@@ -275,6 +556,8 @@ export function buildShellHookPlan(parsed: ParsedShellHookArgs): ShellHookPlan {
     shell,
     profilePath,
     installed,
+    globalRemoteFallback,
+    wslPreferLinuxPath,
     actions: [{
       kind: installed ? 'remove' : 'noop',
       target: profilePath,
@@ -297,14 +580,20 @@ function formatPlan(plan: ShellHookPlan): string {
     `shell: ${plan.shell}`,
     `profile: ${plan.profilePath}`,
     `installed: ${plan.installed}`,
+    `wsl prefer linux path: ${plan.wslPreferLinuxPath}`,
     '',
     'actions:',
   ];
   for (const action of plan.actions) {
     lines.push(`  ${action.kind.padEnd(6, ' ')} ${action.target} - ${action.reason}`);
   }
-  if (plan.subcommand === 'install') {
-    lines.push('', 'Restart the shell or source the profile before testing the codex function hook.');
+  if (plan.subcommand === 'install' && !plan.dryRun) {
+    lines.push(
+      '',
+      'Reload this shell before testing the codex function hook:',
+      `  ${shellHookActivationCommand(plan.shell, plan.profilePath)}`,
+      'Or open a new shell.',
+    );
   }
   if (plan.dryRun && plan.subcommand !== 'status') {
     lines.push('', 'Dry run only; pass --confirm to apply.');

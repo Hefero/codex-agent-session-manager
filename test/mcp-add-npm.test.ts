@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildMcpAddNpmPayload, type NpmRunner } from '../src/tools/mcp-add-npm.js';
+import { buildLocalMcpAddNpmPayload, type NpmRunner } from '../src/tools/mcp-add-npm.js';
+import { OperationStore } from '../src/tools/operations.js';
 
 function tempWorkspace(): string {
   return mkdtempSync(join(tmpdir(), 'codex-agent-session-manager-mcp-add-'));
@@ -38,10 +39,10 @@ function fakeInstallPackage(packageName: string, bin: string, scripts: Record<st
   };
 }
 
-test('mcp add npm dry-run previews package install and config update without writing files', () => {
+test('local mcp add npm dry-run previews package install and config update without writing files', () => {
   const workspace = tempWorkspace();
   try {
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload({
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload({
       packageSpec: '@modelcontextprotocol/server-everything',
     }));
 
@@ -61,11 +62,11 @@ test('mcp add npm dry-run previews package install and config update without wri
   }
 });
 
-test('mcp add npm refuses real install without confirm', () => {
+test('local mcp add npm refuses real install without confirm', () => {
   const workspace = tempWorkspace();
   try {
     let npmCalled = false;
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
       {
         packageSpec: '@modelcontextprotocol/server-everything',
         serverName: 'everything',
@@ -90,12 +91,13 @@ test('mcp add npm refuses real install without confirm', () => {
   }
 });
 
-test('mcp add npm installs locally and writes a marked project MCP config block', () => {
+test('local mcp add npm installs locally and writes a marked project MCP config block', () => {
   const workspace = tempWorkspace();
   try {
     const npmCalls: string[][] = [];
     const fakeInstaller = fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js');
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+    const operationStore = new OperationStore({ workspace });
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
       {
         packageSpec: '@modelcontextprotocol/server-everything',
         serverName: 'everything',
@@ -103,6 +105,7 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
         confirm: true,
       },
       {
+        operationStore,
         npmRunner: (args, options) => {
           npmCalls.push([...args]);
           return fakeInstaller(args, options);
@@ -111,6 +114,7 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
     ));
 
     assert.equal(payload.ok, true);
+    assert.equal(typeof payload.operationId, 'string');
     assert.equal(payload.dryRun, false);
     assert.equal(payload.confirmRequired, false);
     assert.equal(payload.lifecycleScriptsAllowed, false);
@@ -140,15 +144,18 @@ test('mcp add npm installs locally and writes a marked project MCP config block'
       private?: boolean;
     };
     assert.equal(packageJson.private, true);
+    const operation = operationStore.read(String(payload.operationId));
+    assert.equal(operation?.kind, 'local_mcp_add_npm');
+    assert.equal(operation?.status, 'completed');
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
 });
 
-test('mcp add npm can forward env var names and omit default stdio arg', () => {
+test('local mcp add npm can forward env var names and omit default stdio arg', () => {
   const workspace = tempWorkspace();
   try {
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
       {
         packageSpec: 'example-search-mcp@latest',
         serverName: 'search_mcp',
@@ -185,11 +192,11 @@ test('mcp add npm can forward env var names and omit default stdio arg', () => {
   }
 });
 
-test('mcp add npm rejects invalid env var names', () => {
+test('local mcp add npm rejects invalid env var names', () => {
   const workspace = tempWorkspace();
   try {
     assert.throws(
-      () => withCwd(workspace, () => buildMcpAddNpmPayload({
+      () => withCwd(workspace, () => buildLocalMcpAddNpmPayload({
         packageSpec: 'example-search-mcp',
         envVars: ['TAVILY-API-KEY'],
       })),
@@ -200,10 +207,10 @@ test('mcp add npm rejects invalid env var names', () => {
   }
 });
 
-test('mcp add npm reports package lifecycle scripts suppressed by default', () => {
+test('local mcp add npm reports package lifecycle scripts suppressed by default', () => {
   const workspace = tempWorkspace();
   try {
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
       {
         packageSpec: '@wonderwhy-er/desktop-commander',
         serverName: 'desktop_commander',
@@ -227,12 +234,12 @@ test('mcp add npm reports package lifecycle scripts suppressed by default', () =
   }
 });
 
-test('mcp add npm can explicitly allow npm lifecycle scripts', () => {
+test('local mcp add npm can explicitly allow npm lifecycle scripts', () => {
   const workspace = tempWorkspace();
   try {
     const npmCalls: string[][] = [];
     const fakeInstaller = fakeInstallPackage('@modelcontextprotocol/server-everything', 'dist/index.js');
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload(
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload(
       {
         packageSpec: '@modelcontextprotocol/server-everything',
         serverName: 'everything',
@@ -264,14 +271,14 @@ test('mcp add npm can explicitly allow npm lifecycle scripts', () => {
   }
 });
 
-test('mcp add npm refuses to replace unmanaged server config sections', () => {
+test('local mcp add npm refuses to replace unmanaged server config sections', () => {
   const workspace = tempWorkspace();
   try {
     mkdirSync(join(workspace, '.codex'), { recursive: true });
     writeFileSync(join(workspace, '.codex', 'config.toml'), '[mcp_servers.everything]\ncommand = "node"\n');
 
     assert.throws(
-      () => withCwd(workspace, () => buildMcpAddNpmPayload(
+      () => withCwd(workspace, () => buildLocalMcpAddNpmPayload(
         {
           packageSpec: '@modelcontextprotocol/server-everything',
           serverName: 'everything',
@@ -289,23 +296,23 @@ test('mcp add npm refuses to replace unmanaged server config sections', () => {
   }
 });
 
-test('mcp add npm rejects path-like version specs', () => {
+test('local mcp add npm rejects path-like version specs', () => {
   const workspace = tempWorkspace();
   try {
     assert.throws(
-      () => withCwd(workspace, () => buildMcpAddNpmPayload({
+      () => withCwd(workspace, () => buildLocalMcpAddNpmPayload({
         packageSpec: 'left-pad@../outside',
       })),
       /Only npm registry package specs are supported|Unsupported npm package spec/u,
     );
     assert.throws(
-      () => withCwd(workspace, () => buildMcpAddNpmPayload({
+      () => withCwd(workspace, () => buildLocalMcpAddNpmPayload({
         packageSpec: '@scope/pkg@../outside',
       })),
       /Only npm registry package specs are supported|Unsupported npm package spec/u,
     );
 
-    const payload = withCwd(workspace, () => buildMcpAddNpmPayload({
+    const payload = withCwd(workspace, () => buildLocalMcpAddNpmPayload({
       packageSpec: '@scope/pkg@1.2.3-alpha.1',
       dryRun: true,
     }));
@@ -315,7 +322,7 @@ test('mcp add npm rejects path-like version specs', () => {
   }
 });
 
-test('mcp add npm rejects node_modules symlink or junction escapes before install', (t) => {
+test('local mcp add npm rejects node_modules symlink or junction escapes before install', (t) => {
   const workspace = tempWorkspace();
   const outside = tempWorkspace();
   try {
@@ -328,7 +335,7 @@ test('mcp add npm rejects node_modules symlink or junction escapes before instal
 
     let npmCalled = false;
     assert.throws(
-      () => withCwd(workspace, () => buildMcpAddNpmPayload(
+      () => withCwd(workspace, () => buildLocalMcpAddNpmPayload(
         {
           packageSpec: '@modelcontextprotocol/server-everything',
           serverName: 'everything',

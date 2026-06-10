@@ -79,6 +79,25 @@ test('buildAppServerStartPayload dry run previews managed no-resume plan', async
   assert.match(JSON.stringify(payload), /app-server/u);
 });
 
+test('buildAppServerStartPayload forwards native App Server args to the managed plan', async () => {
+  const seenOptions: RemoteOptions[] = [];
+  const payload = await buildAppServerStartPayload(
+    {
+      port: '4555',
+      appServerArgs: ['--config', 'model="gpt-5"', '--enable', 'js_repl'],
+    },
+    {
+      planBuilder: async (options) => {
+        seenOptions.push(options);
+        return fakePlan(options);
+      },
+    },
+  );
+
+  assert.equal(payload.ok, true);
+  assert.deepEqual(seenOptions[0]?.appServerArgs, ['--config', 'model="gpt-5"', '--enable', 'js_repl']);
+});
+
 test('buildAppServerStartPayload refuses real start without confirm', async () => {
   const payload = await buildAppServerStartPayload(
     {
@@ -109,6 +128,7 @@ test('buildAppServerStartPayload schedules durable App Server start operation', 
         dryRun: false,
         confirm: true,
         enableImageGeneration: true,
+        appServerArgs: ['--config', 'model="gpt-5"'],
       },
       {
         store,
@@ -134,12 +154,29 @@ test('buildAppServerStartPayload schedules durable App Server start operation', 
         appServerUrl: 'ws://127.0.0.1:4557',
         workspace: resolve(process.cwd()),
         enableImageGeneration: true,
+        appServerArgs: ['--config', 'model="gpt-5"'],
       },
     ]);
     assert.equal(store.read(String(payload.operationId))?.kind, 'app_server_start');
   } finally {
     fixture.cleanup();
   }
+});
+
+test('app server start operation argv round trips native App Server args', () => {
+  const args = buildAppServerStartOperationArgs({
+    operationId: 'op-start',
+    appServerUrl: 'ws://127.0.0.1:4558',
+    workspace: process.cwd(),
+    appServerArgs: ['--config', 'model="gpt-5"', '--enable', 'js_repl'],
+  });
+
+  assert.deepEqual(parseAppServerStartOperationArgs(args.slice(1)), {
+    operationId: 'op-start',
+    appServerUrl: 'ws://127.0.0.1:4558',
+    workspace: resolve(process.cwd()),
+    appServerArgs: ['--config', 'model="gpt-5"', '--enable', 'js_repl'],
+  });
 });
 
 test('runAppServerStartOperation records executor result and output', async () => {

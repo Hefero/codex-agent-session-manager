@@ -73,7 +73,7 @@ test('runDeinitCommand defaults to dry-run and does not modify files', async () 
     assert.match(text, /does not stop a running Codex App Server/u);
     assert.match(text, /Dry run only; no files were changed\. Pass --confirm to apply\./u);
     assert.equal(existsSync(join(workspace, '.codex', 'config.toml')), true);
-    assert.equal(existsSync(join(workspace, 'AGENTS.md')), true);
+    assert.equal(existsSync(join(workspace, 'AGENTS.md')), false);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -128,7 +128,7 @@ test('deinit confirm removes scaffold and optional runtime while leaving npm pac
   }
 });
 
-test('deinit preserves custom scripts and unrelated file content', () => {
+test('deinit preserves custom scripts and any existing AGENTS.md content', () => {
   const workspace = tempWorkspace();
   try {
     writeFileSync(
@@ -141,7 +141,8 @@ test('deinit preserves custom scripts and unrelated file content', () => {
         },
       }, null, 2)}\n`,
     );
-    writeFileSync(join(workspace, 'AGENTS.md'), `# Existing\n\n<!-- codex-agent-session-manager:start -->\nmanaged\n<!-- codex-agent-session-manager:end -->\n`);
+    const agentsContent = `# Existing\n\n<!-- codex-agent-session-manager:start -->\nmanaged\n<!-- codex-agent-session-manager:end -->\n`;
+    writeFileSync(join(workspace, 'AGENTS.md'), agentsContent);
 
     const plan = buildDeinitPlan({ workspace, confirm: true });
     applyDeinitPlan(plan);
@@ -150,7 +151,7 @@ test('deinit preserves custom scripts and unrelated file content', () => {
       scripts?: Record<string, string>;
     };
     assert.deepEqual(packageJson.scripts, { 'codex:remote': 'custom-command' });
-    assert.equal(readFileSync(join(workspace, 'AGENTS.md'), 'utf8'), '# Existing\n');
+    assert.equal(readFileSync(join(workspace, 'AGENTS.md'), 'utf8'), agentsContent);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
@@ -333,7 +334,7 @@ test('init does not mistake managed mcp-add blocks for the base manager block', 
       ].join('\n'),
     );
 
-    applyInitPlan(buildInitPlan({ workspace, agents: false }), {
+    applyInitPlan(buildInitPlan({ workspace }), {
       npmInstaller(input) {
         assert.equal(resolve(input.workspace), resolve(workspace));
         const distDir = join(workspace, 'node_modules', packageName, 'dist');

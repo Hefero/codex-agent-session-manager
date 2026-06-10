@@ -1,6 +1,6 @@
 # Project Plan
 
-Status: post-alpha real-replay hardening in progress
+Status: next-alpha hardening implemented; release validation complete
 
 ## Bootstrap Workflow
 
@@ -473,14 +473,15 @@ Validation:
 - Let an operator prepare a target project with one command.
 - Keep initialization project-scoped and idempotent.
 - Avoid touching `~/.codex/config.toml` or rewriting user global MCP servers.
-- Make the default helpful for agents while allowing `AGENTS.md` opt-out.
+- Keep agent guidance in the MCP surface instead of mutating consumer project
+  instruction files.
 
 Status: first project init command implemented.
 
 Implemented:
 
 - `codex-agent-session-manager init`.
-- `--dry-run`, `--workspace <path>`, and `--no-agents`.
+- `--dry-run` and `--workspace <path>`.
 - Human-readable output by default with redacted workspace paths; `--json`
   keeps machine-readable output available for automation.
 - Project-scoped `.codex/config.toml` registration for
@@ -502,7 +503,9 @@ Implemented:
   - `codex:remote:dry-run`
   - `codex:app-server:status`
   - `codex:app-server:stop`
-- Small managed `AGENTS.md` block by default, skipped with `--no-agents`.
+  - `codex:app-server:stop:dry-run`
+- `init` does not create or update `AGENTS.md`; guidance is exposed through
+  `codex_session_manager_help`, tool descriptions, and resources.
 - Optional `--install-shell-hook` installs or refreshes the marked `codex`
   function hook for PowerShell, bash, or zsh as an explicit opt-in; default
   `init` remains project-scoped and does not edit shell profiles.
@@ -521,7 +524,7 @@ Validation:
 
 - Unit tests cover argument parsing, redacted dry-run output, no-write dry-run,
   target project application, idempotency, empty-workspace package creation,
-  `--install-shell-hook`, and `--no-agents`.
+  and `--install-shell-hook`.
 - A fresh `codex exec` probe in a temporary project with `package.json`, local
   `codex-agent-session-manager` dependency, generated hidden Windows MCP
   config, and no `remote` call invoked
@@ -569,8 +572,8 @@ Validation:
 
 - `npm run pack:validate`
 - Pack smoke proves installed CLI version, project init, generated scripts,
-  project-scoped MCP config, runtime ignore rule, managed `AGENTS.md` block,
-  and installed `codex:remote:dry-run`.
+  project-scoped MCP config, runtime ignore rule, no generated `AGENTS.md`, and
+  installed `codex:remote:dry-run`.
 - External env/auth validation passed with Tavily MCP:
   `TAVILY_API_KEY` was forwarded through project-scoped `env_vars`, the secret
   value was not written to config, fresh `codex exec` called
@@ -594,10 +597,11 @@ Validation:
   refresh, proof, and cleanup flows.
 - Reduce failure modes observed when an agent uses the tool from a plain
   `codex` session or from a managed remote session.
-- Keep the project-scoped contract: no user global Codex config edits and no
-  raw terminal cleanup as the expected path.
+- Keep the project-scoped default contract: no user global Codex config edits
+  unless the operator explicitly selects the `global install` path, and no raw
+  terminal cleanup as the expected path.
 
-Status: in progress.
+Status: implemented for the next alpha; release validation complete.
 
 Implemented:
 
@@ -606,9 +610,10 @@ Implemented:
 - `init` and `mcp add npm` use a workspace-local npm cache so Windows agents do
   not fall into PowerShell `npm.ps1` execution-policy issues or user-global npm
   cache permissions during normal flows.
-- Generated `AGENTS.md` now tells agents to prefer `mcp add npm`, avoid direct
-  stdio server launches, stop once the target callable MCP tool succeeds, and
-  avoid direct SDK fallbacks as proof.
+- `codex_session_manager_help`, tool descriptions, and MCP resources now tell
+  agents to prefer `mcp add npm`, avoid direct stdio server launches, stop once
+  the target callable MCP tool succeeds, and avoid direct SDK fallbacks as
+  proof.
 - `codex_mcp_refresh` and `codex_session_continue` evidence now explicitly
   says operation completion means `turn/start` was accepted, not that the child
   turn finished.
@@ -645,6 +650,31 @@ Implemented:
   while starting/reusing the managed App Server. The same supervisors consume
   `shell-resume-next` state with `mode: "managed-remote"` and relaunch the
   managed remote flow in the same terminal.
+- `codex-agent-session-manager global install` is the stronger opt-in path for
+  users who want the session-manager MCP registered in user-global Codex config
+  and the global shell hook installed together. It defaults to dry-run,
+  supports `--mcp-only` and `--shell-hook-only`, rejects unmanaged global
+  `codex_agent_session_manager` sections, and has a matching
+  `global uninstall`.
+- In global-install mode, the shell hook routes initialized projects through
+  their local supervisor and routes other plain Codex-shaped launches through
+  `codex-agent-session-manager remote --workspace <cwd> -- <native Codex argv>`,
+  while still delegating native Codex subcommands to the real CLI.
+- On Windows, the global MCP config uses the hidden stdio launcher under
+  `~/.codex-agent-session-manager/` instead of spawning the package command
+  directly.
+- In WSL, shell hooks now have an opt-in Linux PATH preference mode
+  (`--shell-hook-wsl-prefer-linux-path` / `--wsl-prefer-linux-path`) that
+  prepends common Linux npm binary dirs and refuses `/mnt/c` Windows npm shims
+  for `codex-agent-session-manager`.
+- Managed local/global npm MCP add/remove operations now write durable
+  operation records, and `codex_mcp_cleanup_report` / `mcp report` summarizes
+  managed MCP config, package/runtime cleanup state, orphaned global runtime
+  dirs, and recent operations.
+- Agent-facing error feedback is now an explicit hardening layer. See
+  `docs/error-feedback-hardening-plan.md` for the shared `UserFacingError`
+  contract, MCP `ok:false` payload behavior, CLI parser corrections, and
+  safe examples for URL/workspace guardrail failures.
 
 Validation:
 
@@ -656,9 +686,10 @@ Validation:
   output, default resume behavior, explicit fresh fallback, background
   scheduling, operation argv parsing, and launch-before-stop ordering.
 - Unit coverage added for shell-hook dry-run/install/status/uninstall across
-  PowerShell, bash, and zsh; managed remote shell-supervisor generation; and
-  `handoffMode: "shell-resume-next"` managed-remote state writing and
-  consumption into `remote --resume/--prompt` arguments.
+  PowerShell, bash, and zsh; managed remote shell-supervisor generation;
+  native Codex argv passthrough; and `handoffMode: "shell-resume-next"`
+  managed-remote state writing and consumption into manager-owned
+  `remote --resume/--prompt` arguments.
 - Real replay findings preserved in `docs/validation-plan.md`: plain `codex`
   can expose project MCP tools, but self-management operations that need an App
   Server URL or continuation require a managed App Server path or explicit

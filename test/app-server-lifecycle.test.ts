@@ -54,6 +54,25 @@ function writeOwnedAppServerState(workspace: string, pid = 40): void {
   );
 }
 
+function writeReusedAppServerState(workspace: string): void {
+  writeAppServerState(
+    {
+      url: appServerUrl,
+      pid: null,
+      owned: false,
+      reusedServer: true,
+      status: 'ready',
+      workspace,
+      updatedAt: '2026-06-07T00:00:00.000Z',
+      log: {
+        stdout: join(workspace, '.codex-agent-session-manager', 'logs', 'app-server.out.log'),
+        stderr: join(workspace, '.codex-agent-session-manager', 'logs', 'app-server.err.log'),
+      },
+    },
+    workspace,
+  );
+}
+
 function processFixture(workspace: string): ProcessEntry[] {
   return [
     {
@@ -245,6 +264,37 @@ test('buildAppServerStopPayload dry run reports target without creating operatio
   }
 });
 
+test('buildAppServerStopPayload dry run can report a reused App Server target by URL', () => {
+  const fixture = tempStore();
+  const { workspace, store } = fixture;
+  try {
+    writeReusedAppServerState(workspace);
+    const payload = buildAppServerStopPayload(
+      {
+        appServerUrl,
+        dryRun: true,
+      },
+      {
+        workspace,
+        store,
+        processLister: () => processFixture(workspace),
+      },
+    );
+
+    assert.equal(payload.ok, true);
+    assert.equal(payload.dryRun, true);
+    assert.equal(payload.scope, 'forced-app-server-url');
+    const target = payload.appServerUrlTarget as { canStop?: boolean; pid?: number; processTreeCount?: number; matchCount?: number };
+    assert.equal(target.canStop, true);
+    assert.equal(target.pid, 40);
+    assert.equal(target.processTreeCount, 2);
+    assert.equal(target.matchCount, 2);
+    assert.equal(store.snapshot().count, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('buildAppServerStopPayload refuses real stop without confirm', () => {
   const fixture = tempStore();
   const { workspace } = fixture;
@@ -266,6 +316,34 @@ test('buildAppServerStopPayload refuses real stop without confirm', () => {
     assert.equal(payload.ok, false);
     assert.equal(payload.refused, true);
     assert.equal(payload.confirmRequired, true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('buildAppServerStopPayload refuses URL stop without force even when confirmed', () => {
+  const fixture = tempStore();
+  const { workspace } = fixture;
+  try {
+    writeReusedAppServerState(workspace);
+    const payload = buildAppServerStopPayload(
+      {
+        appServerUrl,
+        dryRun: false,
+        confirm: true,
+      },
+      {
+        workspace,
+        processLister: () => processFixture(workspace),
+        scheduler() {
+          throw new Error('scheduler should not run without force');
+        },
+      },
+    );
+
+    assert.equal(payload.ok, false);
+    assert.equal(payload.refused, true);
+    assert.equal(payload.forceRequired, true);
   } finally {
     fixture.cleanup();
   }
@@ -321,6 +399,109 @@ test('buildAppServerStopPayload schedules durable stop operation only after conf
   }
 });
 
+test('buildAppServerStopPayload schedules forced URL stop only after confirm and force', () => {
+  const fixture = tempStore();
+  const { workspace, store } = fixture;
+  try {
+    writeReusedAppServerState(workspace);
+    const scheduledInputs: unknown[] = [];
+    const payload = buildAppServerStopPayload(
+      {
+        appServerUrl,
+        dryRun: false,
+        confirm: true,
+        force: true,
+        timeoutMs: 5_000,
+        delayMs: 0,
+      },
+      {
+        workspace,
+        store,
+        processLister: () => processFixture(workspace),
+        scheduler(input) {
+          scheduledInputs.push(input);
+          return {
+            scheduled: true,
+            pid: 123,
+            detached: true,
+            windowsHide: true,
+            internalCommand: 'run-app-server-stop-operation',
+            argvIncludesSecrets: false,
+            delayMs: 0,
+          };
+        },
+      },
+    );
+
+    assert.equal(payload.ok, true);
+    assert.deepEqual(scheduledInputs, [
+      {
+        operationId: payload.operationId,
+        workspace: resolve(workspace),
+        expectedPid: 40,
+        expectedAppServerUrl: appServerUrl,
+        forceByUrl: true,
+        timeoutMs: 5_000,
+        delayMs: 0,
+      },
+    ]);
+    assert.equal(store.read(String(payload.operationId))?.kind, 'app_server_stop');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('buildAppServerStopPayload can force-stop the state URL for the short stop alias', () => {
+  const fixture = tempStore();
+  const { workspace, store } = fixture;
+  try {
+    writeReusedAppServerState(workspace);
+    const scheduledInputs: unknown[] = [];
+    const payload = buildAppServerStopPayload(
+      {
+        dryRun: false,
+        confirm: true,
+        force: true,
+        useStateUrl: true,
+        timeoutMs: 5_000,
+        delayMs: 0,
+      },
+      {
+        workspace,
+        store,
+        processLister: () => processFixture(workspace),
+        scheduler(input) {
+          scheduledInputs.push(input);
+          return {
+            scheduled: true,
+            pid: 123,
+            detached: true,
+            windowsHide: true,
+            internalCommand: 'run-app-server-stop-operation',
+            argvIncludesSecrets: false,
+            delayMs: 0,
+          };
+        },
+      },
+    );
+
+    assert.equal(payload.ok, true);
+    assert.deepEqual(scheduledInputs, [
+      {
+        operationId: payload.operationId,
+        workspace: resolve(workspace),
+        expectedPid: 40,
+        expectedAppServerUrl: appServerUrl,
+        forceByUrl: true,
+        timeoutMs: 5_000,
+        delayMs: 0,
+      },
+    ]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('runAppServerStopOperation stops managed process tree and marks state stopped', async () => {
   const fixture = tempStore();
   const { workspace, store } = fixture;
@@ -363,6 +544,55 @@ test('runAppServerStopOperation stops managed process tree and marks state stopp
     assert.equal(state?.status, 'stopped');
     assert.equal(state?.pid, null);
     assert.equal(state?.owned, false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('runAppServerStopOperation can force-stop a reused App Server by URL and reconcile matching local state', async () => {
+  const fixture = tempStore();
+  const { workspace, store } = fixture;
+  try {
+    writeReusedAppServerState(workspace);
+    store.create({
+      id: 'op-stop-url',
+      kind: 'app_server_stop',
+      status: 'running',
+      evidence: { background: { scheduled: true } },
+    });
+    let listCount = 0;
+    const stopped: Array<{ rootPid: number; treePids: number[] }> = [];
+
+    const operation = await runAppServerStopOperation(
+      {
+        operationId: 'op-stop-url',
+        workspace,
+        expectedPid: 40,
+        expectedAppServerUrl: appServerUrl,
+        forceByUrl: true,
+        timeoutMs: 100,
+        delayMs: 0,
+      },
+      {
+        store,
+        processLister() {
+          listCount += 1;
+          return listCount === 1 ? processFixture(workspace) : [];
+        },
+        processStopper(rootPid, tree) {
+          stopped.push({ rootPid, treePids: tree.map((entry) => entry.pid) });
+          return { status: 0, stdout: '', stderr: '' };
+        },
+      },
+    );
+
+    assert.equal(operation?.status, 'completed');
+    assert.deepEqual(stopped, [{ rootPid: 40, treePids: [40, 41] }]);
+    const state = readAppServerStateFile(appServerStateFileForWorkspace(workspace, 'primary'), 'primary').state;
+    assert.equal(state?.status, 'stopped');
+    assert.equal(state?.pid, null);
+    assert.equal(state?.owned, false);
+    assert.equal(state?.reusedServer, false);
   } finally {
     fixture.cleanup();
   }
@@ -422,6 +652,29 @@ test('app server stop operation argv round trips', () => {
     workspace,
     expectedPid: 40,
     expectedAppServerUrl: appServerUrl,
+    timeoutMs: 5_000,
+    delayMs: 0,
+  });
+});
+
+test('forced app server stop operation argv round trips', () => {
+  const workspace = resolve(process.cwd());
+  const args = buildAppServerStopOperationArgs({
+    operationId: 'op-a',
+    workspace,
+    expectedPid: 40,
+    expectedAppServerUrl: appServerUrl,
+    forceByUrl: true,
+    timeoutMs: 5_000,
+    delayMs: 0,
+  });
+
+  assert.deepEqual(parseAppServerStopOperationArgs(args.slice(1)), {
+    operationId: 'op-a',
+    workspace,
+    expectedPid: 40,
+    expectedAppServerUrl: appServerUrl,
+    forceByUrl: true,
     timeoutMs: 5_000,
     delayMs: 0,
   });

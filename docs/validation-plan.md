@@ -1,6 +1,6 @@
 # Validation Plan
 
-Status: alpha.4 OAuth/env and stdio direct-launch hardening implemented
+Status: next-alpha hardening validation plan
 
 ## Scaffold Checks
 
@@ -13,12 +13,17 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
-node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts init --dry-run --workspace .
+node --import tsx src/cli.ts init --dry-run --workspace . --package-spec ./codex-agent-session-manager-<version>.tgz
 node --import tsx src/cli.ts deinit --workspace .
+node --import tsx src/cli.ts global install --dry-run
 node --import tsx src/cli.ts --help
 node --import tsx src/cli.ts mcp --help
-node --import tsx src/cli.ts mcp add npm @modelcontextprotocol/server-everything --dry-run
-node --import tsx src/cli.ts mcp add npm tavily-mcp@latest --server-name tavily_search --env-var TAVILY_API_KEY --no-default-stdio-arg --dry-run
+node --import tsx src/cli.ts mcp local add npm @modelcontextprotocol/server-everything --dry-run
+node --import tsx src/cli.ts mcp local add npm example-search-mcp@latest --server-name search_mcp --env-var SEARCH_API_KEY --no-default-stdio-arg --dry-run
+node --import tsx src/cli.ts mcp local remove everything --dry-run
+node --import tsx src/cli.ts mcp global add npm @modelcontextprotocol/server-everything --dry-run
+node --import tsx src/cli.ts mcp global remove everything --dry-run
 node --import tsx src/cli.ts app-server start --dry-run --port 4566
 node --import tsx src/cli.ts session launch --dry-run --url ws://127.0.0.1:4566 --thread-id <thread-id>
 npm run pack:validate
@@ -35,7 +40,11 @@ The smoke must prove:
   - `codex_app_server_state_read`
   - `codex_app_server_status`
   - `codex_app_server_stop`
-  - `codex_mcp_add_npm`
+  - `codex_global_mcp_add_npm`
+  - `codex_global_mcp_remove`
+  - `codex_local_mcp_add_npm`
+  - `codex_local_mcp_remove`
+  - `codex_mcp_cleanup_report`
   - `codex_mcp_refresh`
   - `codex_mcp_reload`
   - `codex_mcp_status_list`
@@ -43,42 +52,71 @@ The smoke must prove:
   - `codex_operation_wait`
   - `codex_session_close`
   - `codex_session_continue`
+  - `codex_session_hard_relaunch`
   - `codex_session_launch`
+  - `codex_session_manager_help`
   - `codex_session_manager_probe`
   - `codex_session_replace`
   - `codex_thread_context`
   - `codex_threads_list`
 - `tools/call` can call `codex_session_manager_probe`.
-- `resources/list` includes `codex-session-manager://operations`.
+- `tools/call` can call `codex_session_manager_help` for at least the
+  `mcp-handling` topic.
+- `resources/list` includes `codex-session-manager://guide`,
+  `codex-session-manager://workflows`,
+  `codex-session-manager://workflows/mcp-handling`,
+  `codex-session-manager://safety`,
+  `codex-session-manager://global-install`, and
+  `codex-session-manager://operations`.
+- `resources/read` can read `codex-session-manager://guide`.
 - CLI help lists the public App Server, MCP refresh, and session commands.
 - CLI `mcp --help` reaches the public CLI path, not the stdio server alias.
 - CLI public subcommands reject ignored cross-command flags and extra
   positionals before scheduling any guarded operation.
-- CLI `mcp add npm` dry-run emits a project-scoped install/config plan without
+- CLI `mcp local add npm` dry-run emits a project-scoped install/config plan without
   writing files and shows `--ignore-scripts`, `--no-audit`, `--no-fund`, and
   workspace-local `--cache ./.npm-cache` by default.
 - npm execution helpers must avoid direct `spawnSync('npm.cmd', ..., {
   shell:false })` on Windows. The preferred Windows path is `node.exe
   <node-prefix>/node_modules/npm/bin/npm-cli.js ...`, with `cmd.exe /d /c
   npm.cmd ...` only as fallback.
-- CLI/MCP `mcp add npm` supports secret-bearing MCPs through `env_vars` /
+- CLI/MCP `mcp local add npm` supports secret-bearing MCPs through `env_vars` /
   `--env-var` without storing secret values in `.codex/config.toml`.
-- CLI/MCP `mcp add npm` reports that `env_vars` stores names only, and that
+- CLI/MCP `mcp local add npm` reports that `env_vars` stores names only, and that
   values created after App Server launch require App Server restart/relaunch
   or a reviewed wrapper before refresh.
-- Generated `AGENTS.md` instructs agents to prefer read-only OAuth scopes
-  first, require explicit operator approval for write/delete scopes, avoid
-  patching `node_modules`, avoid visible direct-launch validation of stdio MCP
-  entrypoints, and continue through refresh/replacement until a real callable
-  MCP tool call proves the change.
-- CLI/MCP `mcp add npm` can omit the default positional `"stdio"` argument for
+- `codex_session_manager_help` and the guidance resources instruct agents to
+  prefer read-only OAuth scopes first, require explicit operator approval for
+  write/delete scopes, avoid patching `node_modules`, avoid visible
+  direct-launch validation of stdio MCP entrypoints, and continue through
+  refresh/replacement until a real callable MCP tool call proves the change.
+- CLI/MCP `mcp local add npm` can omit the default positional `"stdio"` argument for
   packages that default to stdio.
-- Real CLI/MCP `mcp add npm` execution requires `--confirm` or
+- Real CLI/MCP `mcp local add npm` execution requires `--confirm` or
   `dryRun:false, confirm:true`.
-- Real CLI/MCP `mcp add npm` execution suppresses npm lifecycle scripts unless
+- Real CLI/MCP `mcp local add npm` execution suppresses npm lifecycle scripts unless
   `--allow-scripts` / `allowScripts:true` is explicitly selected.
-- Real CLI/MCP `mcp add npm` execution reports installed package lifecycle
+- Real CLI/MCP `mcp local add npm` execution reports installed package lifecycle
   scripts and warns when they were suppressed.
+- CLI/MCP `mcp local remove` dry-run reports whether a managed project-scoped MCP
+  block exists without writing files.
+- CLI/MCP `mcp local remove` removes only marked blocks created by `mcp local add npm` and
+  does not touch unmanaged MCP sections.
+- CLI/MCP `mcp local remove --uninstall-package` runs `npm uninstall -D` only with
+  explicit confirmation and skips uninstall when another managed MCP block still
+  references the same npm package.
+- CLI/MCP `mcp global add npm` installs into an isolated user-global runtime,
+  writes only marked user-global config, defaults to dry-run, stores env var
+  names only, and suppresses npm lifecycle scripts unless explicitly allowed.
+- CLI/MCP `mcp global remove` removes only marked user-global blocks created by
+  this package and removes the isolated runtime only with explicit package
+  removal opt-in.
+- CLI/MCP `mcp report` / `codex_mcp_cleanup_report` reports managed
+  project-local and user-global MCP cleanup state, orphaned managed global
+  runtime dirs, and recent add/remove operations without returning raw config
+  content or env values.
+- Real CLI/MCP local/global MCP add/remove executions create completed or
+  failed durable operation records.
 - CLI App Server start dry-run emits JSON with `dryRun:true` and the requested
   loopback URL.
 - CLI init dry-run emits human-readable output for a temporary workspace
@@ -168,6 +206,9 @@ Current checks:
 - dry-run `codex_app_server_stop`, confirm real execution requires
   `dryRun:false` and `confirm:true`, and verify the real operation only targets
   the owned workspace App Server process tree.
+- verify forced URL stop requires a loopback `appServerUrl`, `force:true`, and
+  `confirm:true`, revalidates a `codex app-server --listen <url>` process, and
+  reconciles matching reused local launcher state to stopped.
 - verify App Server stop marks primary launcher state as `stopped`/`owned:false`
   and does not close remote TUI windows or alter user global MCP config.
 - expose public CLI commands for App Server lifecycle, MCP refresh, and session
@@ -196,15 +237,23 @@ Current checks:
   dry-run/confirm semantics for process-launching or destructive operations.
 - keep `init` human-readable by default with `--json` for automation.
 - initialize target projects through project-scoped `.codex/config.toml`, local
-  runtime/cache ignore rules, optional `AGENTS.md`, and project-local npm
-  metadata. Empty workspaces should get a minimal `package.json`, a
+  runtime/cache ignore rules, generated package scripts, and project-local npm
+  metadata. `init` must not create or update `AGENTS.md`; agent-facing guidance
+  belongs in MCP tool descriptions, `codex_session_manager_help`, and read-only
+  resources. Empty workspaces should get a minimal `package.json`, a
   devDependency on this package, and a local install using
   `--ignore-scripts --no-audit --no-fund --cache ./.npm-cache`.
 - keep init idempotent and avoid editing user global Codex config.
+- keep user-global integration behind explicit `global install --confirm`.
+  Dry-run must show both the global MCP config action and shell-hook action,
+  `--mcp-only` / `--shell-hook-only` must scope the operation, and unmanaged
+  global `codex_agent_session_manager` sections must not be overwritten.
 - keep shell profile edits out of default init. Validate
   `init --install-shell-hook` as the explicit opt-in path, including dry-run
   with no profile write and real install against a disposable profile path.
-  Validate explicit PowerShell, bash, and zsh selection.
+  Validate explicit PowerShell, bash, and zsh selection. In WSL, validate the
+  opt-in PATH mitigation that prefers Linux npm binaries and refuses `/mnt/c`
+  Windows shims for `codex-agent-session-manager`.
 - keep non-project-local host integration edits out of init. VS Code extension
   visibility was probed and is not part of the supported scaffold contract for
   this release.
@@ -217,7 +266,7 @@ Current checks:
   removed, refusing when unmanaged dependencies or custom scripts remain, and
   remove `.codex/` when it is empty or will become empty through planned
   managed file deletions.
-- keep managed npm MCP blocks created by `mcp add npm` unless
+- keep managed npm MCP blocks created by `mcp local add npm` unless
   `--remove-added-mcps` is explicitly passed.
 - keep direct MCP SDK calls classified as diagnostic only; final proof remains
   a model-callable MCP tool call from the continuation/replacement boundary.
@@ -235,12 +284,14 @@ Current checks:
   writes only a marked profile block with `--confirm`, uninstall removes only
   that block, and initialized workspaces route `codex` through the managed
   `remote` path rather than plain Codex. Validate PowerShell plus POSIX
-  bash/zsh blocks. Validate both `codex "<prompt>"` -> managed
-  `remote --prompt` and `codex resume <threadId> "<prompt>"` -> managed
-  `remote --resume`.
+  bash/zsh blocks. Validate that `codex [flags] [prompt]` preserves native
+  Codex argv through managed `remote -- ...`, including representative flags
+  such as `--model`, `--search`, and
+  `--dangerously-bypass-approvals-and-sandbox`.
   `handoffMode: "shell-resume-next"` writes local managed-remote resume-next
   state instead of opening a new terminal directly, and the supervisor converts
-  that state into `remote --resume/--prompt` arguments. When
+  that internal state into manager-owned `remote --resume/--prompt` arguments.
+  When
   `resumeMode: "current"` cannot infer a thread id, it must refuse; only
   `resumeMode: "fresh"` may intentionally open a new thread.
 - package only the intended npm artifact files: `dist/`, `scripts/*.cs`,

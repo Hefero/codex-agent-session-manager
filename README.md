@@ -39,9 +39,9 @@ codex
 `codex_agent_session_manager` MCP server, adds local runtime and common secret
 patterns to `.gitignore`, creates or updates `package.json` with
 `codex:init`, `codex:init:dry-run`, remote, and App Server package scripts, and
-creates or updates a small `AGENTS.md` block unless `--no-agents` is passed. It
-does not edit the user's global Codex config or shell profiles unless the
-matching opt-in flag is explicitly passed.
+prepares the local session-manager runtime. It does not edit `AGENTS.md`, the
+user's global Codex config, or shell profiles unless the matching opt-in flag is
+explicitly passed.
 
 After `init`, a normal Codex session started from the project directory can use
 the session-manager MCP tools; `npm run codex:remote` is optional. Use the
@@ -67,12 +67,69 @@ MCP servers even when `codex.cmd mcp list` from the same folder shows them.
 Use terminal-launched Codex or the managed remote flow for supported callable
 catalog validation.
 
+Agents should call `codex_session_manager_help` for operational guidance. MCP
+clients that support resources can also read `codex-session-manager://guide`,
+`codex-session-manager://workflows`,
+`codex-session-manager://workflows/mcp-handling`,
+`codex-session-manager://safety`, and
+`codex-session-manager://global-install`.
+
 After upgrading this package in an existing project, rerun
-`npx codex-agent-session-manager init` to refresh the managed `AGENTS.md`,
-`.gitignore`, package scripts, and MCP config block. If the binary is installed
-globally or linked on PATH, `codex-agent-session-manager init` is equivalent.
-If the project already has the generated npm scripts, `npm run codex:init` is
-also equivalent. The init operation is idempotent and project-scoped.
+`npx codex-agent-session-manager init` to refresh `.gitignore`, package
+scripts, and the MCP config block. If the binary is installed globally or linked
+on PATH, `codex-agent-session-manager init` is equivalent. If the project
+already has the generated npm scripts, `npm run codex:init` is also equivalent.
+The init operation is idempotent and project-scoped.
+
+For unpublished local package testing, pass the same package spec that should be
+installed into the target project:
+
+```powershell
+codex-agent-session-manager init --package-spec ./codex-agent-session-manager-<version>.tgz
+```
+
+Published releases do not need this flag.
+
+### Optional Global Install
+
+`global install` is the stronger opt-in path. It edits the user's global Codex
+config and shell profile only when explicitly confirmed:
+
+```powershell
+codex-agent-session-manager global install --dry-run
+codex-agent-session-manager global install --confirm
+```
+
+By default it does both:
+
+- installs `codex_agent_session_manager` in `~/.codex/config.toml`, so the MCP
+  tools and `codex_session_manager_help` are available to normal Codex sessions
+  across projects;
+- installs the global `codex` shell function hook with managed-remote fallback,
+  so plain `codex` launches in any directory can start or reuse a managed App
+  Server. Initialized projects still use their generated local supervisor when
+  present.
+
+Use component flags when you want only one side:
+
+```powershell
+codex-agent-session-manager global install --mcp-only --confirm
+codex-agent-session-manager global install --shell-hook-only --confirm
+codex-agent-session-manager global uninstall --confirm
+```
+
+On Windows, the global MCP config uses a hidden stdio launcher under
+`~/.codex-agent-session-manager/` to avoid helper console popups. The global
+MCP command expects `codex-agent-session-manager` to be available on PATH,
+for example through a global npm install or `npm link`.
+The global shell hook also expects `codex-agent-session-manager` on PATH.
+In WSL, add `--shell-hook-wsl-prefer-linux-path` when installing the global
+hook if your PATH includes Windows npm shims under `/mnt/c` before Linux npm
+binaries:
+
+```bash
+codex-agent-session-manager global install --shell-hook-wsl-prefer-linux-path --confirm
+```
 
 ### Optional Shell Hook
 
@@ -99,21 +156,27 @@ With the shell hook:
 - native Codex subcommands and flags such as `codex mcp list`,
   `codex login`, `codex --version`, and `codex --help` still delegate to the
   real Codex CLI;
-- simple Codex-shaped commands are preserved:
-  - `codex "<prompt>"` becomes managed remote with `--prompt`;
-  - `codex resume <thread-id> "<prompt>"` becomes managed remote with
-    `--resume <thread-id> --prompt`;
-  - `codex resume --last "<prompt>"` becomes managed remote with
-    `--resume-last --prompt`.
+- interactive Codex-shaped launches are preserved through native argv
+  passthrough:
+  - `codex "<prompt>"` becomes managed remote as `remote -- "<prompt>"`;
+  - `codex --model gpt-5 --search "<prompt>"` keeps the native Codex flags;
+  - `codex --dangerously-bypass-approvals-and-sandbox "<prompt>"` keeps that
+    explicit native bypass flag. The hook does not add it implicitly in
+    passthrough mode.
 
 Supported shells are PowerShell, bash, and zsh. Auto-detection uses PowerShell
 on Windows, the current `$SHELL` when it is bash or zsh, zsh on macOS when the
 shell is unknown, and bash elsewhere. Default profile targets are:
 
-- PowerShell: `~/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1`
+- PowerShell 7 when detected: `~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1`
+- Windows PowerShell fallback: `~/Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1`
 - zsh: `~/.zshrc`
 - bash on macOS: `~/.bash_profile`
 - bash elsewhere: `~/.bashrc`
+
+PowerShell 5 and PowerShell 7 use different profile files. Run the install
+from each shell, or pass `--shell-hook-profile`, if you want both profiles to
+receive the hook.
 
 Preview first:
 
@@ -140,8 +203,15 @@ codex-agent-session-manager shell-hook install --shell zsh --confirm
 
 Use `--shell-hook-profile <path>` with `init`, or `--profile <path>` with
 `shell-hook`, to target a disposable profile during testing. Restart the shell
-or source the edited profile before testing the `codex` function. Remove the
-profile hook with:
+or source the edited profile before testing the `codex` function.
+
+In WSL bash/zsh, `init --install-shell-hook --shell-hook-wsl-prefer-linux-path`
+or `shell-hook install --wsl-prefer-linux-path` makes the hook prefer Linux npm
+binary locations and refuse `/mnt/c` Windows shims for
+`codex-agent-session-manager`. This avoids npm shim/path errors when Windows
+PATH entries appear before the WSL npm install.
+
+Remove the profile hook with:
 
 ```powershell
 codex-agent-session-manager shell-hook uninstall --confirm
@@ -152,16 +222,25 @@ Remove from a project:
 ```powershell
 codex-agent-session-manager app-server stop --dry-run
 codex-agent-session-manager stop --confirm
+codex-agent-session-manager stop --force --confirm
+codex-agent-session-manager app-server stop --url ws://127.0.0.1:60998 --force --confirm
 codex-agent-session-manager deinit --confirm --remove-runtime
 npm uninstall -D codex-agent-session-manager
 ```
 
+Remove the optional global install:
+
+```powershell
+codex-agent-session-manager global uninstall --dry-run
+codex-agent-session-manager global uninstall --confirm
+```
+
 `deinit` defaults to dry-run unless `--confirm` is passed. It removes only the
 project-scoped scaffold it can recognize: the managed `.codex/config.toml`
-block, generated npm scripts, managed `AGENTS.md` block, and local runtime
-and npm-cache ignore rules. Runtime state under
+block, generated npm scripts, and local runtime and npm-cache ignore rules.
+Runtime state under
 `.codex-agent-session-manager/` is removed only with `--remove-runtime`. MCP
-server blocks created through `mcp add npm` are kept unless
+server blocks created through `mcp local add npm` are kept unless
 `--remove-added-mcps` is passed; when removed, `deinit` reports the npm
 packages selected for uninstall or scratch-project removal. It does not stop a
 running Codex App Server, remote TUI, or already-loaded MCP server processes;
@@ -170,7 +249,7 @@ processes must exit.
 Scratch test workspaces can also use `deinit --confirm
 --remove-added-mcps --remove-empty-npm-project --remove-empty-codex-dir` to
 remove an npm skeleton that contains only this package and npm MCP packages
-created by `mcp add npm`. This refuses to remove `package.json` when unmanaged
+created by `mcp local add npm`. This refuses to remove `package.json` when unmanaged
 dependencies or custom scripts remain.
 
 ## Current Surface
@@ -184,7 +263,11 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_app_server_state_read`
   - `codex_app_server_status`
   - `codex_app_server_stop`
-  - `codex_mcp_add_npm`
+  - `codex_global_mcp_add_npm`
+  - `codex_global_mcp_remove`
+  - `codex_local_mcp_add_npm`
+  - `codex_local_mcp_remove`
+  - `codex_mcp_cleanup_report`
   - `codex_mcp_refresh`
   - `codex_mcp_reload`
   - `codex_mcp_status_list`
@@ -194,10 +277,16 @@ The current MCP surface is still small, but already dogfooded:
   - `codex_session_continue`
   - `codex_session_hard_relaunch`
   - `codex_session_launch`
+  - `codex_session_manager_help`
   - `codex_session_manager_probe`
   - `codex_session_replace`
   - `codex_thread_context`
   - `codex_threads_list`
+- Guidance resources: `codex-session-manager://guide`,
+  `codex-session-manager://workflows`,
+  `codex-session-manager://workflows/mcp-handling`,
+  `codex-session-manager://safety`, and
+  `codex-session-manager://global-install`.
 - Durable operation resource: `codex-session-manager://operations`.
 - Raw JSON-RPC smoke test for MCP initialization, tool listing, tool call, and
   resource listing.
@@ -250,15 +339,27 @@ codex-agent-session-manager deinit --confirm --remove-runtime
 codex-agent-session-manager shell-hook install --dry-run
 codex-agent-session-manager shell-hook install --confirm
 codex-agent-session-manager shell-hook uninstall --dry-run
+codex-agent-session-manager global install --dry-run
+codex-agent-session-manager global install --confirm
+codex-agent-session-manager global uninstall --dry-run
 
 codex-agent-session-manager app-server start --dry-run --port auto
+codex-agent-session-manager app-server start --dry-run --port auto -- --config 'model="gpt-5"' --enable js_repl
 codex-agent-session-manager app-server status --no-probe-ready
 codex-agent-session-manager app-server stop --dry-run
+codex-agent-session-manager app-server stop --confirm
 codex-agent-session-manager stop --confirm
+codex-agent-session-manager stop --force --confirm
+codex-agent-session-manager app-server stop --url ws://127.0.0.1:60998 --force --confirm
 
-codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --dry-run
-codex-agent-session-manager mcp add npm @modelcontextprotocol/server-everything --server-name everything --confirm
-codex-agent-session-manager mcp add npm example-search-mcp@latest --server-name search_mcp --env-var SEARCH_API_KEY --no-default-stdio-arg --confirm
+codex-agent-session-manager mcp local add npm @modelcontextprotocol/server-everything --dry-run
+codex-agent-session-manager mcp local add npm @modelcontextprotocol/server-everything --server-name everything --confirm
+codex-agent-session-manager mcp local add npm example-search-mcp@latest --server-name search_mcp --env-var SEARCH_API_KEY --no-default-stdio-arg --confirm
+codex-agent-session-manager mcp local remove everything --dry-run
+codex-agent-session-manager mcp local remove everything --uninstall-package --confirm
+codex-agent-session-manager mcp global add npm @modelcontextprotocol/server-everything --dry-run
+codex-agent-session-manager mcp global remove everything --dry-run
+codex-agent-session-manager mcp report
 codex-agent-session-manager mcp refresh --thread-id <thread-id>
 
 codex-agent-session-manager operation read --operation-id <operation-id>
@@ -267,6 +368,14 @@ codex-agent-session-manager operation wait --operation-id <operation-id> --timeo
 codex-agent-session-manager session launch --thread-id <thread-id> --dry-run
 codex-agent-session-manager session close --thread-id <thread-id> --dry-run
 codex-agent-session-manager session replace --thread-id <thread-id> --dry-run
+```
+
+PowerShell resolves npm binaries to the generated `.ps1` shim first, and that
+shim consumes the `--` passthrough separator. For commands that pass native
+arguments after `--`, call the `.cmd` shim explicitly:
+
+```powershell
+codex-agent-session-manager.cmd app-server start --dry-run --port auto -- --config 'model="gpt-5"' --enable js_repl
 ```
 
 See [Optional Shell Hook](#optional-shell-hook) before installing the shell
@@ -291,7 +400,7 @@ Server.
 Use `codex-agent-session-manager init --json` when automation needs the
 machine-readable form.
 
-`mcp add npm` defaults to dry-run. With `--confirm`, it installs an npm MCP
+`mcp local add npm` defaults to dry-run. With `--confirm`, it installs an npm MCP
 package locally and writes only the project-scoped `.codex/config.toml`. It
 does not edit the user's global Codex config. The install uses
 `--ignore-scripts --no-audit --no-fund --cache ./.npm-cache` by default; pass
@@ -306,6 +415,25 @@ Use repeated `--env-var <NAME>` for secret-bearing MCPs; this writes
 without storing the secret value in TOML. Use `--no-default-stdio-arg` for npm
 MCP packages whose entrypoint defaults to stdio and should not receive a
 positional `"stdio"` argument.
+
+`mcp local remove <server-name>` removes a project-scoped MCP block that was created
+by `mcp local add npm`. It defaults to dry-run and refuses to touch unmanaged
+`[mcp_servers.*]` sections. Pass `--uninstall-package --confirm` to also run
+`npm uninstall -D` for the inferred npm package, but only when no other managed
+MCP block still references that package. After removal, run `mcp refresh` and
+validate that the removed namespace is absent from the callable catalog.
+Use `mcp report` before or after cleanup when you need a read-only summary of
+managed local/global MCP blocks, package/runtime presence, orphaned managed
+global runtime directories, and recent add/remove operations.
+
+`mcp global add npm` is the stronger third-party MCP path. It installs the npm
+package into an isolated runtime under the session-manager global state
+directory and writes a marked user-global `~/.codex/config.toml` MCP block.
+It also defaults to dry-run, disables npm lifecycle scripts by default, stores
+only env var names, and affects Codex sessions outside the current project
+until removed. `mcp global remove <server-name>` removes only managed global
+blocks created by this package. Pass `--uninstall-package --confirm` only when
+the isolated global runtime directory should also be removed.
 
 For OAuth, PII, write-capable, or destructive MCPs, treat the package install
 as only the first step. Prefer read-only scopes first, escalate to write/delete
@@ -331,7 +459,7 @@ npm run security:smoke
 npm run security:scan
 npm run audit:prod
 npm run remote -- --dry-run --no-resume
-node --import tsx src/cli.ts init --dry-run --workspace . --no-agents
+node --import tsx src/cli.ts init --dry-run --workspace .
 npm run pack:validate
 ```
 
@@ -382,9 +510,12 @@ launching to `codex_session_launch`, keeping App Server lifecycle and visible
 session launch as separate operations. Agents can inspect the managed process
 with `codex_app_server_status` and stop only the workspace-owned App Server
 tree with `codex_app_server_stop`; neither operation rewrites user global MCP
-configuration. If managed state says an App Server is ready but the process is
-gone, `codex_app_server_status` reconciles the stale state to stopped and marks
-stuck managed stop operations completed with reconciliation evidence.
+configuration. When a workspace reused an App Server it does not own, the
+explicit forced path is `app-server stop --url <loopback-ws-url> --force
+--confirm`; it validates a running `codex app-server --listen <url>` process
+before stopping it. If managed state says an App Server is ready but the process
+is gone, `codex_app_server_status` reconciles the stale state to stopped and
+marks stuck managed stop operations completed with reconciliation evidence.
 
 `codex_session_close` targets Codex remote TUI processes. It does not own
 operator-created terminal wrappers such as a manual `powershell -NoExit`
